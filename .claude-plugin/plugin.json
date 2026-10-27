@@ -1,0 +1,20 @@
+{
+  "name": "teachme-anything",
+  "version": "0.6.0",
+  "description": "Learn any technical skill with Claude Code as your teacher: lessons that answer every click instantly, real exercises checked on your machine, mistakes traced to their cause and re-checked later, in VS Code or the terminal.",
+  "author": {
+    "name": "The-Hasanov",
+    "url": "https://github.com/The-Hasanov"
+  },
+  "homepage": "https://github.com/The-Hasanov/teachme-anything",
+  "repository": "https://github.com/The-Hasanov/teachme-anything",
+  "license": "MIT",
+  "keywords": [
+    "education",
+    "tutor",
+    "learning",
+    "vscode",
+    "claude-code"
+  ],
+  "types": "./types/index.d.ts"
+}

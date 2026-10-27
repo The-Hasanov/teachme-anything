@@ -1,0 +1,16 @@
+{
+  "name": "teachme-anything",
+  "description": "Teach Me Anything: learn new technical skills with Claude Code as your tutor.",
+  "owner": {
+    "name": "The-Hasanov",
+    "url": "https://github.com/The-Hasanov"
+  },
+  "plugins": [
+    {
+      "name": "teachme-anything",
+      "description": "Learn any technical skill with Claude Code as your teacher: lessons that answer every click instantly, real exercises checked on your machine, mistakes traced to their cause and re-checked later, in VS Code or the terminal.",
+      "source": "./",
+      "category": "education"
+    }
+  ]
+}

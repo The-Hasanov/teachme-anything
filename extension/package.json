@@ -1,0 +1,79 @@
+{
+  "name": "teachme-anything",
+  "displayName": "Teach Me Anything",
+  "description": "The Teach Me Anything lesson view for Claude Code: lessons in the side bar, a terminal and files for exercises, never in your way.",
+  "version": "0.6.0",
+  "publisher": "the-hasanov",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/The-Hasanov/teachme-anything"
+  },
+  "homepage": "https://github.com/The-Hasanov/teachme-anything",
+  "bugs": "https://github.com/The-Hasanov/teachme-anything/issues",
+  "categories": [
+    "Education"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "tutor",
+    "learning"
+  ],
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:teachme.lesson"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "teachme",
+          "title": "Teach Me",
+          "icon": "media/teachme.svg"
+        }
+      ]
+    },
+    "views": {
+      "teachme": [
+        {
+          "type": "webview",
+          "id": "teachme.lesson",
+          "name": "Lesson"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "teachme.progress",
+        "title": "Show progress",
+        "category": "Teach Me",
+        "icon": "$(graph-line)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "teachme.progress",
+          "when": "view == teachme.lesson",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "package": "vsce package",
+    "test": "node test/view.cjs && node test/channel.cjs && node test/layout-lint.cjs && node test/integration/run.cjs"
+  },
+  "dependencies": {
+    "@vscode/codicons": "^0.0.36"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.0.0"
+  }
+}

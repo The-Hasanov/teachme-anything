@@ -1,0 +1,588 @@
+import { atom, read, update } from 'claude-code'
+
+import * as bigo from '../courses/bigo'
+import * as git from '../courses/git'
+import * as python from '../courses/python'
+import * as sql from '../courses/sql'
+import type { EngineInterface, Register } from 'claude-code'
+
+import { checked, current, press, screen, setupDone, snapshot, taught } from './engine/engine'
+import type { Ctx, Out } from './engine/engine'
+import { replay } from './engine/engine'
+import type { Course, Effect, LogEvent, Line, Press, Screen, Segment } from './engine/types'
+import { skillState } from './engine/mastery'
+import { migrate } from './engine/migrate'
+import { validateCourse, validateSegment } from './engine/schema'
+import { MANUAL, installPlan, isTool, probeEnv, runCommand, runProbes, scaffold } from './host/adapters'
+import type { Env, Os } from './host/adapters'
+import { stats, statsText } from './engine/stats'
+import { DIR, append, hasCourse, install, load, newLog, progressMarkdown } from './host/store'
+import type { Log } from './host/store'
+import { AUTHOR_MODEL, AUTHOR_PROMPT, GENERIC_INTAKE, SETUP_ADAPTERS, authorTask, courseTask, diagnose } from './host/teacher'
+import { verifySegment } from './host/verify'
+import { newVsCode, sendView, tick } from './host/vscode'
+import type { LayoutOp, VsCode } from './host/vscode'
+
+const PLUGIN = 'teachme-anything'
+const PANE = 'teach'
+const SPARK = '▁▂▃▄▅▆▇█'
+const OUT_ERR = /^(Traceback|\s+File "|\w*(Error|Exception)\b|error[:[]|fatal:|ERROR\b|FAIL\b)/
+const OUT_WARN = /^(warning[:[]|Warning\b|WARN\b|hint:)/i
+const TOOL = (name: string) => `mcp__${PLUGIN}__${name}`
+const OWN_TOOLS = new Set(['start_course', 'snapshot', 'progress', 'submit_segment', 'submit_course'].map(TOOL))
+
+const view = atom({ plugin: 'teachme-anything', key: 'screen' } as const, null, { shape: 'screen-1' })
+
+type Session = {
+  root: string
+  os: Os
+  course?: Course
+  segments: Record<string, Segment>
+  state: ReturnType<typeof replay>
+  log: Log
+  metrics: Log
+  env?: Env
+  welcome: boolean
+  progress?: boolean
+  busy?: string
+  preparing?: string
+  lastProbes?: { id: string; ok: boolean; got: string }[]
+  vscode?: VsCode
+}
+
+let sess: Session | undefined
+
+async function deviceOf($: EngineInterface) {
+  let id = (await $.store.get('device')) as string | undefined
+  if (!id) { id = `d${Math.random().toString(36).slice(2, 10)}`; await $.store.set('device', id) }
+  return id
+}
+
+async function ctx($: EngineInterface): Promise<Ctx> {
+  const s = sess!
+  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress }
+}
+
+const practiceDir = (s: Session, seg?: Segment) => seg?.practice ? `${s.root}/${seg.practice.dir}` : undefined
+
+async function metric($: EngineInterface, m: Record<string, unknown>) {
+  if (sess) void append($, sess.metrics, [{ ts: await $.clock.now(), ...m }])
+}
+
+async function refresh($: EngineInterface, layout?: LayoutOp) {
+  const s = sess
+  if (!s) return
+  const sc = screen(await ctx($))
+  await update($, view, () => sc)
+  if (s.vscode) void sendView($, s.vscode, sc, layout)
+}
+
+async function commit($: EngineInterface, out: Out) {
+  const s = sess!
+  if (out.events.length) {
+    s.state = out.events.reduce((st, e) => replayOne(st, e), s.state)
+    void append($, s.log, out.events)
+  }
+  await refresh($)
+  if (out.events.length && s.course) void $.fs.write(`${s.root}/PROGRESS.md`, progressMarkdown(s.course, s.state, out.events.at(-1)!.ts)).catch(() => undefined)
+  for (const fx of out.effects) void run($, fx)
+}
+
+const replayOne = (st: Session['state'], e: LogEvent) => replay([e], st)
+
+export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
+  const s = sess
+  if (!s) return
+  const t0 = await $.clock.now()
+  if ('action' in p && p.action === 'progress') { s.progress = true; return refresh($) }
+  if (s.progress) { if ('action' in p && p.action === 'back') { s.progress = false; await refresh($) } return }
+  if (s.welcome && 'action' in p && (p.action === 'continue' || p.action === 'curriculum')) {
+    const out = press(await ctx($), p)
+    s.welcome = false
+    await commit($, out)
+    const dir = practiceDir(s, current(await ctx($))?.seg)
+    if (dir) await refresh($, { op: 'terminal', cwd: dir })
+  } else {
+    const before = current(await ctx($))?.step.id
+    await commit($, press(await ctx($), p))
+    const at = current(await ctx($))
+    const dir = practiceDir(s, at?.seg)
+    if (at && at.step.id !== before && at.step.open && dir) await refresh($, { op: 'practice', path: `${dir}/${at.step.open}` })
+  }
+  const t1 = await $.clock.now()
+  void metric($, { kind: 'press', press: p, ms: t1 - t0, ...(sentAt ? { fromView: t1 - sentAt } : {}) })
+}
+
+async function run($: EngineInterface, fx: Effect) {
+  const s = sess!
+  try {
+    if (fx.kind === 'check') {
+      const at = current(await ctx($))
+      const dir = practiceDir(s, at?.seg)
+      if (!at?.step.check || !dir) return
+      s.busy = 'Checking…'
+      await refresh($)
+      const t0 = await $.clock.now()
+      const results = await runProbes($, dir, at.step.check.probes)
+      s.lastProbes = results
+      s.busy = undefined
+      void metric($, { kind: 'check', step: at.step.id, ms: (await $.clock.now()) - t0 })
+      return commit($, checked(await ctx($), at.step.id, results))
+    }
+    if (fx.kind === 'escalate') {
+      const at = current(await ctx($))
+      if (!at || !s.course) return
+      const dir = practiceDir(s, at.seg)
+      const all = s.lastProbes ?? (dir && at.step.check ? await runProbes($, dir, at.step.check.probes) : [])
+      const d = await diagnose($, s.course, at.step, fx.probe, fx.got, all)
+      void metric($, { kind: 'escalate', step: at.step.id, ms: d.ms, model: d.model, usage: d.usage })
+      return commit($, taught(await ctx($), fx.esc, d))
+    }
+    if (fx.kind === 'setup') return runSetup($)
+    if (fx.kind === 'practice') return ensurePractice($, fx.dir)
+    if (fx.kind === 'prepare') return prepare($, fx.after)
+    if (fx.kind === 'remedy') return remedy($, fx.tag, fx.skill)
+  } catch (err) {
+    s.busy = undefined
+    $.ui.log(`teachme: ${fx.kind} failed: ${err}`, { to: 'debug' })
+    await refresh($)
+  }
+}
+
+async function ensurePractice($: EngineInterface, rel: string) {
+  const s = sess!
+  const dir = `${s.root}/${rel}`
+  const seg = Object.values(s.segments).find(g => g.practice?.dir === rel)
+  if (seg?.practice && !(await $.fs.exists(dir))) await scaffold($, dir, seg.practice.scaffold, s.os)
+  await refresh($, { op: 'terminal', cwd: dir })
+}
+
+async function runSetup($: EngineInterface) {
+  const s = sess!
+  if (!s.course || s.busy) return
+  const now = async () => $.clock.now()
+  const set = async (req: string, status: 'ok' | 'running' | 'failed', note?: string) =>
+    commit($, { events: [{ ts: await now(), type: 'setup', req, status, ...(note ? { note } : {}) }], effects: [] })
+  const t0 = await now()
+  for (const r of s.course.setup) {
+    if (s.state.setup[r.id]?.status === 'ok') continue
+    await set(r.id, 'running')
+    if (isTool(r.adapter)) {
+      let version = s.env?.tools[r.adapter]
+      for (const step of version ? [] : installPlan(r.adapter, s.os)) {
+        await set(r.id, 'running', step.label)
+        await runCommand($, s.root, step.argv)
+        s.env = await probeEnv($)
+        version = s.env.tools[r.adapter]
+        if (version) break
+      }
+      await (version ? set(r.id, 'ok', version) : set(r.id, 'failed', `Install it from ${MANUAL[r.adapter] ?? 'its website'}, then press Set up again.`))
+      if (!version) break
+    } else if (r.adapter === 'practice') {
+      const segs = Object.values(s.segments).filter(g => g.practice)
+      for (const g of segs) if (!(await $.fs.exists(`${s.root}/${g.practice!.dir}`))) {
+        const bad = await scaffold($, `${s.root}/${g.practice!.dir}`, g.practice!.scaffold, s.os)
+        if (bad) { await set(r.id, 'failed', bad); return }
+      }
+      await set(r.id, 'ok', segs.map(g => g.practice!.dir).join(', '))
+    } else if (r.adapter === 'verify') {
+      const bad: string[] = []
+      for (const g of Object.values(s.segments)) {
+        const v = await verifySegment($, g, s.os)
+        void metric($, { kind: 'verify', seg: g.id, ms: v.ms, ok: v.ok })
+        if (!v.ok) { bad.push(...v.errors); delete s.segments[g.id] }
+      }
+      const n = Object.keys(s.segments).length
+      await (bad.length ? set(r.id, 'failed', bad[0]) : set(r.id, 'ok', n ? `${n} ${n === 1 ? 'lesson' : 'lessons'} checked` : 'Each lesson is checked before you see it'))
+    } else {
+      await set(r.id, 'ok')
+    }
+  }
+  void metric($, { kind: 'setup', ms: (await now()) - t0 })
+}
+
+const remedies = new Set<string>()
+async function remedy($: EngineInterface, tag: string, skill?: string) {
+  const s = sess!
+  if (!s.course || remedies.has(tag)) return
+  remedies.add(tag)
+  const n = Object.keys(s.segments).filter(id => id.startsWith(`remedy-${tag}-`)).length + 1
+  const belief = s.course.skills.flatMap(k => k.misconceptions).find(m => m.tag === tag)?.belief ?? tag
+  const seen = Object.values(s.segments).flatMap(g => g.steps).filter(x => x.remedy === tag || x.wrong?.some(w => w.tag === tag)).map(x => `"${x.title}": ${x.body}`)
+  const r = await $.agent.spawn({
+    subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: 'Teach Me: a new angle for a mistake',
+    prompt: [
+      `Write segment "remedy-${tag}-${n}": two drill steps (drill: true, remedy: "${tag}", kind "mcq" or "predict", skill "${skill ?? ''}", no practice, no check) for this misconception: ${belief}.`,
+      'Use an explanation angle and a contrasting example the learner has NOT seen. They already saw:', ...seen.slice(0, 6),
+      `Learner snapshot:\n${snapshot(await ctx($))}`, `Course:\n${JSON.stringify(s.course)}`,
+    ].join('\n'),
+  })
+  void metric($, { kind: 'remedy', tag, started: !('deny' in r && r.deny) })
+}
+
+async function prepare($: EngineInterface, after: string, target?: string) {
+  const s = sess!
+  if (!s.course || s.preparing) return
+  const order = s.course.phases.flatMap(p => p.segments)
+  const nextId = target ?? order[order.indexOf(after) + 1]
+  if (!nextId || s.segments[nextId]) return
+  const phase = s.course.phases.find(p => p.segments.includes(nextId))
+  s.preparing = nextId
+  const r = await $.agent.spawn({
+    subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: 'Teach Me: prepare the next lesson',
+    prompt: authorTask(s.course, s.segments[after] ?? python.lists1, snapshot(await ctx($)), nextId, phase?.title ?? ''),
+  })
+  if ('deny' in r && r.deny) { s.preparing = undefined; $.ui.log(`teachme: author not started: ${r.deny}`, { to: 'debug' }) }
+  void metric($, { kind: 'prepare', seg: nextId, started: !('deny' in r && r.deny) })
+}
+
+async function submitSegment($: EngineInterface, input: { segment: unknown; newSkills?: Course['skills'] }) {
+  const s = sess
+  if (!s?.course) return { ok: false, errors: ['no course in this folder'] }
+  const course: Course = input.newSkills?.length ? { ...s.course, skills: [...s.course.skills, ...input.newSkills.filter(k => !s.course!.skills.some(x => x.id === k.id))] } : s.course
+  const seg = input.segment as Segment
+  const errors = validateSegment(seg, course)
+  if (errors.length) return { ok: false, errors }
+  const v = await verifySegment($, seg, s.os)
+  if (!v.ok) return { ok: false, errors: v.errors }
+  const phases = course.phases.map(p => p.segments.includes(seg.id) ? { ...p, skills: [...new Set([...p.skills, ...seg.skills])] } : p)
+  s.course = { ...course, phases }
+  s.segments[seg.id] = seg
+  if (s.preparing === seg.id) s.preparing = undefined
+  await install($, s.root, s.course, [seg])
+  void metric($, { kind: 'segment', seg: seg.id, verifyMs: v.ms })
+  await refresh($)
+  return { ok: true, id: seg.id }
+}
+
+async function open($: EngineInterface, root: string) {
+  const device = await deviceOf($)
+  const l = await load($, root)
+  if (l.errors.length) $.ui.log(`teachme: ${l.errors.join('; ')}`, { to: 'debug' })
+  sess = {
+    root, os: (await probeEnvCached($)).os, course: l.course, segments: l.segments, state: l.state,
+    log: newLog(root, device), metrics: newLog(root, device, 'metrics'), welcome: l.state.stage === 'lesson', env: await probeEnvCached($),
+  }
+  sess.vscode = newVsCode(root, (p, t) => { void dispatch($, p, t) }, () => { void refresh($) })
+  await refresh($)
+}
+
+let envCache: Env | undefined
+async function probeEnvCached($: EngineInterface) {
+  envCache ??= await probeEnv($)
+  return envCache
+}
+
+const LIBRARY: { match: RegExp; course: Course; segments: Segment[] }[] = [
+  { match: /\bgit\b/i, course: git.course, segments: git.segments },
+  { match: /\bpython\b/i, course: python.course, segments: python.segments },
+  { match: /\bsql\b|sqlite|database quer/i, course: sql.course, segments: sql.segments },
+  { match: /big[- ]?o\b|complexity/i, course: bigo.course, segments: bigo.segments },
+]
+
+async function generateCourse($: EngineInterface, subject: string, root: string, background?: string) {
+  const env = await probeEnvCached($)
+  const id = subject.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'course'
+  const provisional: Course = { format: 'teachme.course/1', id, subject, goal: subject, intake: GENERIC_INTAKE, skills: [], phases: [], setup: [] }
+  const device = await deviceOf($)
+  sess = {
+    root, os: env.os, course: provisional, segments: {}, state: replay([]),
+    log: newLog(root, device), metrics: newLog(root, device, 'metrics'), welcome: false, env, busy: 'Writing your course: about a minute.',
+  }
+  sess.vscode = newVsCode(root, (p, t) => { void dispatch($, p, t) }, () => { void refresh($) })
+  const t0 = await $.clock.now()
+  await commit($, { events: [{ ts: t0, type: 'course', course: id }], effects: [] })
+  await $.ui.open({ id: PANE, title: subject })
+  const tools = Object.entries(env.tools).filter(([, v]) => v).map(([k, v]) => `${k} (${v})`).join(', ')
+  const r = await $.agent.spawn({
+    subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: `Teach Me: a new course on ${subject}`,
+    prompt: courseTask(subject, `${env.os}; ${tools || 'no developer tools found'}`, { course: python.course, segment: python.lists1 }, background),
+  })
+  const started = !('deny' in r && r.deny)
+  void metric($, { kind: 'generate', subject, started })
+  if (!started) return { ok: false, reason: `the course author could not start: ${'deny' in r ? r.deny : ''}` }
+  return { ok: true, course: subject, generating: true, ...(background ? { writtenFor: background } : {}), next: 'The lesson view asks 3 questions while a course is written for this learner (about a minute). Say one short line; nothing else to do.' }
+}
+
+async function submitCourse($: EngineInterface, input: { course: unknown }) {
+  const s = sess
+  if (!s?.course || s.course.setup.length) return { ok: false, errors: ['no course is being written in this folder'] }
+  const c = input.course as Course
+  const errors = validateCourse(c)
+  for (const r of Array.isArray(c?.setup) ? c.setup : []) if (!SETUP_ADAPTERS.includes(r?.adapter)) errors.push(`setup ${r?.id}: adapter must be one of ${SETUP_ADAPTERS.join(', ')}`)
+  if (Array.isArray(c?.setup) && c.setup.at(-1)?.adapter !== 'verify') errors.push('setup must end with the verify requirement')
+  if (errors.length) return { ok: false, errors }
+  s.course = { ...c, id: s.course.id, intake: GENERIC_INTAKE }
+  await install($, s.root, s.course, [])
+  const t = await $.clock.now()
+  s.busy = undefined
+  await commit($, { events: s.course.setup.filter(r => isTool(r.adapter)).map(r => ({
+    ts: t, type: 'setup' as const, req: r.id, status: s.env?.tools[r.adapter] ? 'ok' as const : 'missing' as const, ...(s.env?.tools[r.adapter] ? { note: s.env.tools[r.adapter]! } : {}),
+  })), effects: [] })
+  void metric($, { kind: 'course', id: s.course.id, skills: s.course.skills.length })
+  return { ok: true, next: `Now submit segment "${s.course.phases[0]?.segments[0]}" with submit_segment.` }
+}
+
+async function startCourse($: EngineInterface, subject: string, root: string, who: { background?: string; skipBasics?: boolean } = {}) {
+  if (await hasCourse($, root)) {
+    if (!sess) await open($, root)
+    return { ok: true, resumed: true, course: sess?.course?.subject, screen: (await read($, view))?.kind }
+  }
+  if (sess?.root === root && sess.course && !sess.course.setup.length) return { ok: true, resumed: true, course: sess.course.subject, next: 'The course is being written; the learner answers the intake meanwhile.' }
+  const lib = who.skipBasics ? undefined : LIBRARY.find(c => c.match.test(subject))
+  if (!lib) return generateCourse($, subject, root, who.background)
+  const { course, segments } = lib
+  await install($, root, course, segments)
+  await open($, root)
+  const s = sess!
+  const t = await $.clock.now()
+  const env = s.env!
+  const detected: LogEvent[] = [
+    { ts: t, type: 'course', course: course.id },
+    ...course.setup.filter(r => isTool(r.adapter)).map(r => ({
+      ts: t, type: 'setup' as const, req: r.id, status: env.tools[r.adapter] ? 'ok' as const : 'missing' as const, ...(env.tools[r.adapter] ? { note: env.tools[r.adapter]! } : {}),
+    })),
+  ]
+  await commit($, { events: detected, effects: [] })
+  void metric($, { kind: 'start', envMs: env.ms })
+  await $.ui.open({ id: PANE, title: course.subject })
+  return { ok: true, course: course.subject, env: `${env.os}, ${env.shell}, ${env.editor}; ${Object.entries(env.tools).filter(([, v]) => v).map(([k]) => k).join(', ')}`, next: 'The learner answers 3 questions in the lesson view. Say one short line; nothing else to do.' }
+}
+
+export async function lessonRegister($: EngineInterface) {
+  await $.tool.register({
+    name: 'start_course', isDeferred: false,
+    description: 'Teach Me: start or resume a course in this folder ("teach me <subject>"). The lesson view runs the course from then on; answer the learner\'s own questions briefly in chat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        subject: { type: 'string', description: 'What the learner wants to learn, e.g. "Git"' },
+        background: { type: 'string', description: 'What the learner said they already know, in their words, if they said it' },
+        skipBasics: { type: 'boolean', description: 'true only if the learner said they already know the basics or asked to skip them' },
+      },
+      required: ['subject'],
+    },
+  })
+  await $.tool.register({
+    name: 'snapshot', isDeferred: false,
+    description: 'Teach Me: where the learner is now (step, skills, recent mistakes). Read it before answering a learning question.',
+    inputSchema: { type: 'object', properties: {} },
+  })
+  await $.tool.register({
+    name: 'progress', isDeferred: false,
+    description: 'Teach Me: the progress of the learner, from their answers (accuracy, first-try rate, hints, time, learning curve, strengths, weaknesses). Also opens the Progress screen in the lesson view and pane.',
+    inputSchema: { type: 'object', properties: {} },
+  })
+  await $.tool.register({
+    name: 'submit_segment',
+    description: 'Teach Me author: submit a lesson segment (teachme.script/1). It is validated and every check is run before it is cached. Returns {ok} or {errors}.',
+    inputSchema: { type: 'object', properties: { segment: { type: 'object' }, newSkills: { type: 'array', items: { type: 'object' } } }, required: ['segment'] },
+  })
+  await $.tool.register({
+    name: 'submit_course',
+    description: 'Teach Me author: submit a new course (teachme.course/1) for the subject the learner asked for. It is validated; returns {ok, next} or {errors}.',
+    inputSchema: { type: 'object', properties: { course: { type: 'object' } }, required: ['course'] },
+  })
+  await $.agent.register({ name: 'author', description: 'Writes Teach Me courses and lesson segments for one learner.', prompt: AUTHOR_PROMPT, tools: [TOOL('submit_course'), TOOL('submit_segment')], model: AUTHOR_MODEL })
+    .catch(err => $.ui.log(`teachme: author agent: ${err}`, { to: 'debug' }))
+}
+
+export async function lessonStarted($: EngineInterface, cwd: string) {
+  if (!(await hasCourse($, cwd))) await migrateMvp($, cwd)
+  if (await hasCourse($, cwd)) {
+    await open($, cwd)
+    void $.ui.open({ id: PANE, title: sess?.course?.subject ?? 'Teach Me' })
+  }
+  $.clock.every(2000, async () => { if (sess?.vscode) await tick($, sess.vscode) })
+}
+
+async function migrateMvp($: EngineInterface, root: string) {
+  const names = ['COURSE.md', 'ROADMAP.md', 'PROGRESS.md', 'GLOSSARY.md'] as const
+  const text = await Promise.all(names.map(n => $.fs.read(`${root}/${n}`).catch(() => undefined)))
+  const [courseMd, roadmap, progress] = text
+  if (courseMd === undefined || progress === undefined) return
+  const now = await $.clock.now()
+  const { course, events } = migrate({ course: courseMd, ...(roadmap !== undefined ? { roadmap } : {}), progress }, now)
+  if (validateCourse(course).length) return
+  for (const [i, n] of names.entries()) if (text[i] !== undefined) await $.fs.write(`${root}/${DIR}/legacy/${n}`, text[i]!)
+  await install($, root, course, [])
+  await open($, root)
+  await commit($, { events, effects: [] })
+  const s = sess!
+  const phase = course.phases.find(p => !p.skills.every(id => ['demonstrated', 'mastered'].includes(skillState(s.state, id, now)))) ?? course.phases[0]!
+  void metric($, { kind: 'migrated', skills: course.skills.length, events: events.length })
+  await prepare($, '', phase.segments[0])
+}
+
+export function lessonGuard(tool: string, input: { file_path?: string; notebook_path?: string; command?: string }): string | undefined {
+  const path = (input.file_path ?? input.notebook_path ?? '').replace(/\\/g, '/')
+  const isEdit = /^(Edit|Write|NotebookEdit)$/.test(tool)
+  if (isEdit && /(^|\/)\.teachme\//.test(path)) return 'Teach Me state is written by the engine only: use its tools (snapshot, submit_segment).'
+  if (isEdit && sess && /(^|\/)practice\//.test(path)) return "That folder is the learner's practice work: the tutor never edits it."
+  if (tool === 'Bash' && /\.teachme[\\/]/.test(input.command ?? '') && /(>|\brm\b|\bmv\b|\bsed\s+-i|\btee\b)/.test(input.command ?? '')) return 'Teach Me state is written by the engine only.'
+  return undefined
+}
+
+export function lessonSection() {
+  if (!sess?.course) return undefined
+  return {
+    id: `${PLUGIN}:lesson`, scope: 'session' as const,
+    text: 'Teach Me course in this folder. The lesson view (engine) runs every step, answer and hint; never repeat its content. ' +
+      'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists; their position is in <teachme-position> on their message. ' +
+      'End by pointing them back to the step in the lesson view. ' +
+      'Never edit .teachme/ or practice/.',
+  }
+}
+
+export async function lessonTutor($: EngineInterface) {
+  if (!sess?.course) return undefined
+  await $.ui.open({ id: PANE, title: sess.course.subject })
+  return { text: 'Lesson pane opened.' }
+}
+
+export async function lessonBandText($: EngineInterface): Promise<string | undefined> {
+  if (!sess?.course || !(await read($, view))) return undefined
+  const c = await ctx($)
+  const at = current(c)
+  const where = at ? ` · ${at.seg.title} ${at.index + 1}/${at.seg.steps.length}` : ` · ${c.state.stage}`
+  return `Teach Me · ${sess.course.subject}${where}${sess.vscode?.isUp ? ' · VS Code ●' : ''}`
+}
+
+export const registerLesson: Register = on => {
+  on('agent.offer', { agent: `${PLUGIN}:author` }, () => ({ isOffered: false }))
+
+  on('tool.check', async ($, e, next) => OWN_TOOLS.has(e.tool) ? { decision: 'allow', reason: 'Teach Me engine tool' } : next(e))
+
+  on('tool.call', { tool: 'mcp__teachme-anything__start_course' }, async ($, e) => {
+    const a = e as unknown as { subject: string; background?: string; skipBasics?: boolean }
+    return { result: JSON.stringify(await startCourse($, a.subject, await $.session.cwd(), a)) }
+  })
+  on('tool.call', { tool: 'mcp__teachme-anything__snapshot' }, async $ => ({ result: sess ? snapshot(await ctx($)) : 'No Teach Me course in this folder.' }))
+  on('tool.call', { tool: 'mcp__teachme-anything__progress' }, async $ => {
+    if (!sess?.course) return { result: 'No Teach Me course in this folder.' }
+    sess.progress = true
+    await refresh($)
+    return { result: statsText(sess.course, stats(sess.course, sess.state, await $.clock.now())) }
+  })
+  on('tool.call', { tool: 'mcp__teachme-anything__submit_segment' }, async ($, e) => ({ result: JSON.stringify(await submitSegment($, e as never)) }))
+  on('tool.call', { tool: 'mcp__teachme-anything__submit_course' }, async ($, e) => ({ result: JSON.stringify(await submitCourse($, e as never)) }))
+
+  on('prompt.submit', async ($, e, next) => {
+    if (!sess?.course || !e.text || e.text.startsWith('<')) return next(e)
+    if (sess.state.stage === 'lesson' && !sess.state.aside) {
+      const at = current(await ctx($))
+      await commit($, { events: [{ ts: await $.clock.now(), type: 'aside', on: true, ...(at ? { step: at.step.id } : {}) }], effects: [] })
+    }
+    const reply = sess.state.stage === 'lesson' ? '\nReply in at most 3 short sentences, no headings or lists; the lesson view keeps their place.' : ''
+    return next({ ...e, text: `${e.text}\n\n<teachme-position>\n${snapshot(await ctx($))}${reply}\n</teachme-position>` })
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Text, Button, Markdown, Code } = $.ui.resolve(e)
+    const sc = await read($, view)
+    if (!sc) return <Text dimColor>Say "teach me &lt;subject&gt;" to start.</Text>
+    const go = (p: Press) => () => { void dispatch($, p) }
+    const tone = (t?: string) => t === 'right' ? 'success' : t === 'wrong' ? 'warning' : undefined
+    const glyph = { ok: '✓', todo: '○', fail: '✗', run: '…', now: '●' } as const
+    const line = (l: Line, key: string) => (
+      <Box key={key} flexDirection="column">
+        <Text color={l.mark === 'ok' ? 'success' : l.mark === 'fail' ? 'warning' : undefined}>{glyph[l.mark]} {l.text}</Text>
+        {l.detail && <Text dimColor>  {l.detail}</Text>}
+      </Box>
+    )
+    return (
+      <Box flexDirection="column" gap="sm">
+        {sc.progress && <Text dimColor>{sc.progress.label} {'▓'.repeat(Math.round(5 * sc.progress.done / Math.max(1, sc.progress.total)))}{'░'.repeat(5 - Math.round(5 * sc.progress.done / Math.max(1, sc.progress.total)))}</Text>}
+        <Text bold>{sc.title}</Text>
+        {sc.body && <Markdown text={sc.body} />}
+        {sc.compare && <Markdown text={`${sc.compare.text}\n\n*Where it stops:* ${sc.compare.stops}`} />}
+        {sc.code && <Box borderStyle="round" borderColor="subtle" paddingX={1}><Code source={sc.code.source} language={sc.code.lang} wrap="wrap" /></Box>}
+        {sc.where && (
+          <Box flexDirection="column">
+            {sc.where.file && <Text dimColor>Edit {sc.where.dir}/{sc.where.file}</Text>}
+            <Text dimColor>In a second terminal: cd {sc.where.dir}</Text>
+          </Box>
+        )}
+        {sc.frame && (
+          <Box flexDirection="column" paddingX={1} borderStyle="single" borderColor="suggestion">
+            <Text dimColor>Frame {sc.frame.i + 1} of {sc.frame.n}</Text>
+            {sc.frame.state && <Code source={sc.frame.state} wrap="wrap" />}
+            {sc.frame.code && <Code source={sc.frame.code} wrap="wrap" />}
+            <Text>{sc.frame.note}</Text>
+          </Box>
+        )}
+        {sc.output !== undefined && (
+          <Box flexDirection="column">
+            <Text dimColor>Output</Text>
+            <Box flexDirection="column" paddingX={1}>
+              {sc.output.split('\n').map((l, i) => <Text key={`out-${i}`} color={OUT_ERR.test(l) ? 'error' : OUT_WARN.test(l) ? 'warning' : undefined}>{l || ' '}</Text>)}
+            </Box>
+          </Box>
+        )}
+        {sc.table && (() => {
+          const t = sc.table
+          const w = t.columns.map((c, k) => Math.max(c.length, ...t.rows.map(r => r.cells[k]!.length + (r.at === k ? 1 : 0))))
+          return (
+            <Box flexDirection="column">
+              <Text dimColor>{t.columns.map((c, k) => c.padEnd(w[k]!)).join('  ')}</Text>
+              {t.rows.map((r, i) => (
+                <Text key={`row-${i}`} color={r.mark === 'right' ? 'success' : r.mark === 'wrong' ? 'warning' : undefined}>
+                  {r.cells.map((c, k) => (r.at === k ? `▸${c}` : c).padEnd(w[k]!)).join('  ')}{r.mark === 'right' ? '  ✓' : r.mark === 'wrong' ? '  ✗' : ''}
+                </Text>
+              ))}
+            </Box>
+          )
+        })()}
+        {sc.built && (
+          <Box flexDirection="column">
+            {sc.built.length === 0 && <Text dimColor>Press the lines in order.</Text>}
+            {sc.built.map((b, i) => <Text key={`built-${i}`} color={b.mark === 'right' ? 'success' : b.mark === 'wrong' ? 'warning' : undefined}>{`${i + 1}. ${b.text}`}{b.mark === 'right' ? '  ✓' : b.mark === 'wrong' ? '  ✗' : ''}</Text>)}
+          </Box>
+        )}
+        {sc.lines?.map((l, i) => line(l, `line-${i}`))}
+        {sc.tiles && (
+          <Box flexDirection="row" flexWrap="wrap" columnGap={3}>
+            {sc.tiles.map(t => <Text key={`tile-${t.label}`}><Text bold>{t.value}</Text> <Text dimColor>{t.label}</Text></Text>)}
+          </Box>
+        )}
+        {sc.chart && (
+          <Box flexDirection="column">
+            <Text color="suggestion">{sc.chart.points.map(v => SPARK[Math.round(v * (SPARK.length - 1))]).join('')}</Text>
+            <Text dimColor>{sc.chart.label} · first {Math.round(100 * sc.chart.points[0]!)}%, now {Math.round(100 * sc.chart.points.at(-1)!)}%</Text>
+          </Box>
+        )}
+        {sc.groups?.map(g => (
+          <Box key={`group-${g.title}`} flexDirection="column">
+            <Text bold>{g.title}</Text>
+            {g.lines.map((l, i) => line(l, `${g.title}-${i}`))}
+          </Box>
+        ))}
+        {sc.choices?.map(ch => (
+          <Box key={`choice-${ch.n}`} flexDirection="column">
+            {ch.used
+              ? <Text dimColor>✓ {ch.n}  {ch.text}</Text>
+              : ch.mark || sc.result
+              ? <Text color={ch.mark === 'right' || ch.mark === 'key' ? 'success' : ch.mark === 'wrong' ? 'warning' : undefined} dimColor={!ch.mark}>{ch.mark === 'right' ? '✓' : ch.mark === 'wrong' ? '✗' : ch.mark === 'key' ? '→' : ' '} {ch.n}  {ch.text}</Text>
+              : <Button key={`choose-${ch.n}`} hotkey={String(ch.n)} plain onPress={go({ choose: ch.n })}>{ch.text}</Button>}
+            {ch.code && ch.code.trim() !== ch.text.trim() && <Box paddingX={2}><Code source={ch.code} wrap="wrap" /></Box>}
+            {ch.mark && ch.why && <Text dimColor>    {ch.why}</Text>}
+          </Box>
+        ))}
+        {sc.hint && <Text color="suggestion">Hint {sc.hint.level}: {sc.hint.text}</Text>}
+        {sc.result && <Text color={tone(sc.result.tone)} italic={sc.result.tone === 'wait'}>{sc.result.tone === 'right' ? '✓ ' : sc.result.tone === 'wrong' ? '✗ ' : ''}{sc.result.text}</Text>}
+        {sc.actions.length > 0 && (
+          <Box flexDirection="row" flexWrap="wrap" gap="sm">
+            {sc.actions.map(a => (
+              <Button key={`act-${a.id}`} variant={a.primary ? 'primary' : 'secondary'} {...(a.key && /^[a-z]$/.test(a.key) ? { hotkey: a.key } : {})} onPress={go({ action: a.id })}>{a.label}</Button>
+            ))}
+          </Box>
+        )}
+        {sc.more && <Text dimColor>{sc.more}</Text>}
+      </Box>
+    )
+  })
+}
+
+export const _session = () => sess
+export const _reset = () => { sess = undefined; envCache = undefined }
+export { setupDone, DIR }

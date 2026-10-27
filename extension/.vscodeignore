@@ -1,0 +1,5 @@
+.git/**
+*.vsix
+node_modules/@vscode/vsce/**
+test/**
+.vscode-test/**
