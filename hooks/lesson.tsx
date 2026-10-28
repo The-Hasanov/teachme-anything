@@ -18,7 +18,7 @@ import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
 import { DIR, append, hasCourse, install, load, newLog, progressMarkdown } from './host/store'
 import type { Log } from './host/store'
-import { AUTHOR_MODEL, AUTHOR_PROMPT, GENERIC_INTAKE, SETUP_ADAPTERS, authorTask, courseTask, diagnose, projectTask } from './host/teacher'
+import { AUTHOR_MODEL, AUTHOR_PROMPT, DOCTOR_PROMPT, GENERIC_INTAKE, SETUP_ADAPTERS, authorTask, courseTask, diagnose, projectTask } from './host/teacher'
 import { verifySegment } from './host/verify'
 import { newVsCode, sendView, tick } from './host/vscode'
 import type { LayoutOp, VsCode } from './host/vscode'
@@ -47,6 +47,7 @@ type Session = {
   busy?: string
   preparing?: string
   prepAgent?: string
+  healAgent?: string
   build?: Build & { open: boolean; agent?: string }
   lastProbes?: { id: string; ok: boolean; got: string }[]
   vscode?: VsCode
@@ -146,6 +147,7 @@ async function run($: EngineInterface, fx: Effect) {
       return commit($, taught(await ctx($), fx.esc, d))
     }
     if (fx.kind === 'setup') return runSetup($)
+    if (fx.kind === 'heal') return heal($)
     if (fx.kind === 'practice') return ensurePractice($, fx.dir, fx.seg)
     if (fx.kind === 'prepare') return prepare($, fx.after)
     if (fx.kind === 'remedy') return remedy($, fx.tag, fx.skill)
@@ -217,6 +219,31 @@ async function runSetup($: EngineInterface) {
 }
 
 const remedies = new Set<string>()
+const HEALING = 'Fixing your setup…'
+
+async function recheck($: EngineInterface) {
+  const s = sess
+  if (!s?.course) return 'No Teach Me course in this folder.'
+  if (s.busy === HEALING) s.busy = undefined
+  await runSetup($)
+  return s.course.setup.map(r => `${s.state.setup[r.id]?.status === 'ok' ? '✓' : '✗'} ${r.title}${s.state.setup[r.id]?.note ? `: ${s.state.setup[r.id]!.note}` : ''}`).join('\n')
+}
+
+async function heal($: EngineInterface) {
+  const s = sess!
+  if (!s.course || s.busy || s.healAgent) return
+  const failed = s.course.setup.filter(r => s.state.setup[r.id]?.status === 'failed').map(r => `- ${r.title} (adapter ${r.adapter}): ${s.state.setup[r.id]!.note ?? 'failed'}`)
+  s.busy = HEALING
+  await refresh($)
+  const r = await $.agent.spawn({
+    subagentType: `${PLUGIN}:doctor`, description: 'Teach Me: fix the setup',
+    prompt: [`OS: ${s.os}. Folder: ${s.root}. Tools the engine found: ${JSON.stringify(s.env?.tools ?? {})}.`, 'Failed setup items:', ...failed].join('\n'),
+  })
+  if ('deny' in r && r.deny) { s.busy = undefined; $.ui.log(`teachme: doctor not started: ${r.deny}`, { to: 'debug' }); await refresh($) }
+  else s.healAgent = r.agentId
+  void metric($, { kind: 'heal', items: failed.length, started: !('deny' in r && r.deny) })
+}
+
 async function remedy($: EngineInterface, tag: string, skill?: string) {
   const s = sess!
   if (!s.course || remedies.has(tag)) return
@@ -497,12 +524,19 @@ export async function lessonRegister($: EngineInterface) {
     inputSchema: { type: 'object', properties: { phase: { type: 'object' }, segment: { type: 'object' }, newSkills: { type: 'array', items: { type: 'object' } } }, required: ['phase', 'segment'] },
   })
   await $.tool.register({
+    name: 'recheck_setup',
+    description: 'Teach Me doctor: run the setup checks again in the engine, on the PATH it started with. Returns each item as ✓ or ✗ with its note.',
+    inputSchema: { type: 'object', properties: {} },
+  })
+  await $.tool.register({
     name: 'submit_course',
     description: 'Teach Me author: submit a new course (teachme.course/1) for the subject the learner asked for. It is validated; returns {ok, next} or {errors}.',
     inputSchema: { type: 'object', properties: { course: { type: 'object' } }, required: ['course'] },
   })
   await $.agent.register({ name: 'author', description: 'Writes Teach Me courses and lesson segments for one learner.', prompt: AUTHOR_PROMPT, tools: [TOOL('submit_course'), TOOL('submit_segment'), TOOL('submit_project')], model: AUTHOR_MODEL })
     .catch(err => $.ui.log(`teachme: author agent: ${err}`, { to: 'debug' }))
+  await $.agent.register({ name: 'doctor', description: 'Finds why a Teach Me setup item fails on this machine and fixes it.', prompt: DOCTOR_PROMPT, tools: ['Bash', 'Read', 'Glob', 'Grep', TOOL('recheck_setup')], model: 'sonnet' })
+    .catch(err => $.ui.log(`teachme: doctor agent: ${err}`, { to: 'debug' }))
 }
 
 export async function lessonStarted($: EngineInterface, cwd: string) {
@@ -585,6 +619,7 @@ export const registerLesson: Register = on => {
   on('tool.call', { tool: 'mcp__teachme-anything__submit_segment' }, async ($, e) => ({ result: JSON.stringify(await submitSegment($, e as never)) }))
   on('tool.call', { tool: 'mcp__teachme-anything__submit_course' }, async ($, e) => ({ result: JSON.stringify(await submitCourse($, e as never)) }))
   on('tool.call', { tool: 'mcp__teachme-anything__build_with_me' }, async ($, e) => ({ result: JSON.stringify(await buildWithMe($, e as never)) }))
+  on('tool.call', { tool: 'mcp__teachme-anything__recheck_setup' }, async $ => ({ result: await recheck($) }))
   on('tool.call', { tool: 'mcp__teachme-anything__submit_project' }, async ($, e) => ({ result: JSON.stringify(await submitProject($, e as never)) }))
 
   // The author of the next segment ended without a valid submit_segment: say so and offer a retry
@@ -594,6 +629,11 @@ export const registerLesson: Register = on => {
       void metric($, { kind: 'project-failed', title: s.build.title })
       s.build = { ...s.build, stage: 'pick', open: true, note: 'Planning did not work this time. Pick again, or describe it another way.' }
       await refresh($)
+    }
+    // The doctor finished: check the setup again, so its fix shows as ✓ or the item stays ✗ with a reason
+    if (s?.healAgent && e.agentId === s.healAgent) {
+      s.healAgent = undefined
+      await recheck($)
     }
     if (s?.preparing && e.agentId && e.agentId === s.prepAgent) {
       $.ui.log(`teachme: the author ended without segment ${s.preparing}`, { to: 'debug' })

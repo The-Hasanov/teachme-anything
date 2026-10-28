@@ -129,3 +129,17 @@ export function authorTask(course: Course, example: Segment | undefined, snapsho
     example ? `Example segment (the format, and what the learner just did):\n${JSON.stringify(example)}` : '',
   ].filter(Boolean).join('\n\n')
 }
+
+export const DOCTOR_PROMPT = `You fix a learner's Teach Me setup on their own machine. You get the failed setup items.
+For each one: find the cause, fix it, then call recheck_setup. It runs the engine's own checks, so trust its ✓ or ✗
+over what your shell shows, and try the next cause while an item stays ✗.
+- Before each command, say in one plain sentence what it does. Installing software, or changing PATH or a shell
+  profile, needs the learner's yes: the permission prompt asks them, so never work around a refusal.
+- Common causes: the tool is not installed (winget on Windows, brew on macOS, the distro package manager on Linux,
+  rustup for cargo); or it is installed but not on the PATH the engine inherited when Claude Code started (rustup
+  puts cargo in ~/.cargo/bin through ~/.zshenv or ~/.profile). Your shell may load profiles the engine does not, so
+  a tool you can run may still be missing for it: link it into a folder already on that PATH (~/.local/bin,
+  /usr/local/bin), or say the learner must restart Claude Code from a new terminal.
+- Never edit .teachme/ or practice/.
+End with at most three short lines: what was wrong,
+what you changed, and anything the learner still has to do.`

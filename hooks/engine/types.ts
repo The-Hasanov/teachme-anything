@@ -157,6 +157,7 @@ export type Effect =
   | { kind: 'check'; step: string }
   | { kind: 'escalate'; esc: string; step: string; probe?: string; got?: string; picked?: number[] }
   | { kind: 'setup' }
+  | { kind: 'heal' }
   | { kind: 'prepare'; after: string }
   | { kind: 'remedy'; tag: string; skill?: string }
   | { kind: 'practice'; dir: string; seg: string }

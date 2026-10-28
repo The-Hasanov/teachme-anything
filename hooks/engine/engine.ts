@@ -324,6 +324,7 @@ export function press(c: Ctx, p: Press): Out {
   if (s.stage === 'setup') {
     if (c.busy) return NONE
     if (action === 'setup') return { events: [], effects: [{ kind: 'setup' }] }
+    if (action === 'heal') return { events: [], effects: [{ kind: 'heal' }] }
     if (action === 'continue' && setupDone(c)) return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
     return NONE
   }
@@ -477,7 +478,8 @@ export function screen(c: Ctx): Screen {
       kind: 'setup', title: 'Your setup',
       lines: course.setup.map(r => ({ mark: mark(s.setup[r.id]?.status), text: r.title, ...(s.setup[r.id]?.note ? { detail: s.setup[r.id]!.note } : {}) })),
       ...(c.busy ? { result: { tone: 'wait' as const, text: c.busy } } : {}),
-      actions: c.busy ? [] : done ? [act('continue', 'Continue', true, 'enter')] : [act('setup', 'Set up', true, 'enter')],
+      actions: c.busy ? [] : done ? [act('continue', 'Continue', true, 'enter')]
+        : [act('setup', 'Set up', true, 'enter'), ...(Object.values(s.setup).some(x => x.status === 'failed') ? [act('heal', 'Fix it for me')] : [])],
     }
   }
   if (s.stage === 'curriculum') {

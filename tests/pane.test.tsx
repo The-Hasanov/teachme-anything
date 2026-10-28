@@ -334,3 +334,27 @@ test('#7 the Bash guard blocks writes into .teachme/ but lets reads with stderr 
   for (const command of blocked) expect([command, lessonGuard('Bash', { command })]).toEqual([command, expect.stringMatching(/engine only/)])
   for (const command of allowed) expect([command, lessonGuard('Bash', { command })]).toEqual([command, undefined])
 })
+
+test('a failed setup item offers Fix it for me: the doctor agent fixes the machine, then the setup is checked again', async ($, on) => {
+  let installed = false
+  const spawned: string[] = []
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => {
+    if (/^python3?$/.test(argv[0]!) && argv[1] === '--version') return installed ? { exitCode: 0, stdout: 'Python 3.13.0' } : { exitCode: 127, stdout: '', stderr: 'not found' }
+    return machine(w.files)(argv, cwd)
+  }, 'linux')
+  on('agent.spawn', (_, e) => { spawned.push(JSON.stringify(e)); return { model: 'sonnet' } })
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Python' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text).join(' | ')
+  for (const key of ['choose-1', 'choose-1', 'choose-1', 'act-setup']) await ui.press({ key })
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Set up', 'Fix it for me'])
+  await ui.press({ key: 'act-heal' })
+  expect(spawned).toEqual([expect.stringMatching(/OS: linux.*Python 3 \(adapter python\).*teachme-anything:doctor/)])
+  expect(await texts()).toMatch(/Fixing your setup/)
+  installed = true
+  expect((await $.tool.call({ tool: 'mcp__teachme-anything__recheck_setup' } as never)).result).toMatch(/^✓ Python 3: Python 3\.13\.0\n✓ Practice folder/)
+  expect(await texts()).toMatch(/✓ Python 3[\s\S]*✓ Examples and exercises checked on your machine/)
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Continue'])
+  await ui.unmount()
+})
