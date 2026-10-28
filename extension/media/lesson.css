@@ -112,3 +112,6 @@ table.data th { color: var(--tm-muted); font-weight: normal; }
 .chart circle { fill: var(--vscode-charts-blue, var(--vscode-progressBar-background)); }
 .chart figcaption { color: var(--tm-muted); font-size: .85em; margin-top: var(--tm-s1); }
 h2 { font-size: 1em; font-weight: 600; margin: var(--tm-s4) 0 var(--tm-s1); }
+.other { display: flex; gap: var(--tm-s2); margin-top: var(--tm-s3); }
+.other input { flex: 1; min-width: 0; padding: var(--tm-s1) var(--tm-s2); font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); border-radius: var(--tm-radius); }
+.other input:focus { outline: 1px solid var(--vscode-focusBorder); }

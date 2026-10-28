@@ -57,11 +57,13 @@ export async function diagnose($: EngineInterface, course: Course, step: Step, p
 export const AUTHOR_PROMPT = `You write lesson scripts for Teach Me, an engine that plays them to one learner without a model in the loop.
 You get the course (skill map, misconception catalogue), the learner's snapshot and an example segment. Write the next segment in the same JSON format ("teachme.script/1") and submit it with the submit_segment tool. If it returns errors, fix exactly those and submit again; stop after three tries.
 Rules:
+- Teach, then test at once: a skill's first question or task comes right after a concept, compare, worked or stepper step with that "skill" that explains it, before the next idea is taught. A "why", feedback or "more" does not count: the learner sees those only after answering.
+- Connect the ideas: a teaching step says how the new idea relates to one the learner already knows. From the second segment on, at least one question or task combines the new skill with earlier ones in a realistic situation and lists those earlier skill ids in "uses".
 - 5 to 8 steps, one idea and one action each. body ≤ 80 words; extra detail in "more". Code ≤ 12 lines.
 - Every choice has a "why". Questions have exactly one key (0-based). Anticipate the likely wrong answers in "wrong": class, misconception tag, short feedback, and a drill step (drill: true) as "branch" for a misconception.
 - Real actions use "check" with read-only "probes" and "reference" commands that solve the task. The engine runs the reference only in a scratch copy to verify; it never shows it. Probes must fail before the task and pass after.
 - Hints: three levels, never the full command or solution at level 1–2; level 3 may show the shape with placeholders.
-- End with one task marked "unseen": true that transfers the idea to a new situation.
+- End with one task marked "unseen": true that transfers the idea to a new, real-world situation.
 - Compare with what the learner knows, and always say where the comparison stops.
 - You may add new skills to the course with the newSkills field (id, title, type, prereqs, misconceptions).
 - Every skill in the segment's "skills" needs a graded step (a question or a task, not a drill).
@@ -76,11 +78,24 @@ export const GENERIC_INTAKE = [
   { id: 'from', q: 'What do you know best?', options: ['Python', 'JavaScript or TypeScript', 'Java, C# or Go', 'No programming yet'] },
 ]
 
-export const SETUP_ADAPTERS = ['git', 'python', 'node', 'docker', 'podman', 'practice', 'verify']
+export const SETUP_ADAPTERS = ['git', 'python', 'node', 'cargo', 'docker', 'podman', 'practice', 'verify']
 
-export function courseTask(subject: string, env: string, example: { course: Course; segment: Segment }, background?: string) {
+const PROJECT_RULES = `Build-with-me rules (the learner and the system build one real project together, milestone by milestone):
+- Each milestone is one segment whose practice.dir is the project folder. The learner's code there persists from one milestone to the next.
+- practice.scaffold rebuilds the project as it stands at the start of this milestone, with the reference solutions of earlier milestones. It is used only when the folder is missing and to check the milestone in a scratch copy.
+- practice.adds is the system's part, written into the learner's folder when the milestone starts: new files, boilerplate, wiring and this milestone's tests. It never writes a file the learner writes (any "open" file of the project).
+- The learner writes the core: one or two "code" tasks that name their file in "open", with a check that runs this milestone's tests. Teach the idea right before each task. Tests fail after adds and pass after the reference.
+- 20 to 40 minutes a milestone. Name the earlier course skills each task applies in "uses". The last milestone ends with something the learner can run and show.
+- Fit the learner's level (the "Level", "Can use" and "Open weaknesses" lines of the snapshot), and re-read it for every milestone, because it changes as they go:
+  - new or beginner: 3 or 4 milestones, one small task each (about 15 lines of their own code), a worked example right before each task, three hints.
+  - developing: 4 or 5 milestones, one task each (up to about 30 lines), a short teaching step before each task.
+  - confident: 4 to 6 milestones, up to two tasks each, some design choices left to the learner, fewer hints.
+  - Tasks use the "Can use" skills. At most one skill they have not started, taught in the milestone before its task. One task practises an open weakness, if there is one.`
+
+export function courseTask(subject: string, env: string, example: { course: Course; segment: Segment }, background?: string, project?: { title: string; pitch: string }) {
   return [
     `A learner asked: "teach me ${subject}". There is no course for it yet. Write one, then its first segment.`,
+    project ? `They want to build "${project.title}": ${project.pitch}. Shape the course toward it: its last phase is that project, with "project": "practice/<name>", a one-sentence "brief" and 2 to 8 milestone segment ids. Earlier phases teach what the project needs.\n${PROJECT_RULES}` : '',
     background ? `They said what they already know: "${background}". Skip that, start where it ends, and compare with it.` : '',
     `1. Submit the course with submit_course: format "teachme.course/1", a short id, subject, goal, intake (copy the three questions below), 4 to 10 skills (id, title, type: code | tool | data | config | ops | concept | design, prereqs, misconceptions: the 1 to 3 beliefs learners really hold, each with a tag), 2 to 5 phases (id, title, skills, segments: ids like "<phase>-1"; only the first phase needs its skills now), and setup (adapters: ${SETUP_ADAPTERS.join(', ')}; always end with "verify"; add "practice" when a segment has a practice folder; a tool the subject needs goes first).`,
     `2. Submit the first segment of the first phase with submit_segment, for a beginner who knows the language in the intake.`,
@@ -90,9 +105,25 @@ export function courseTask(subject: string, env: string, example: { course: Cour
   ].filter(Boolean).join('\n\n')
 }
 
+export function projectTask(course: Course, snapshot: string, pick: { title: string; pitch: string }) {
+  const levelLine = snapshot.split('\n').find(l => l.startsWith('Level:'))?.replace(/^Level: /, '').replace(/\.$/, '') ?? 'unknown'
+  return [
+    `The learner wants to build a project together: "${pick.title}": ${pick.pitch}`,
+    `Their level now: ${levelLine}. Size the project for it (see the rules below).`,
+    `Plan it as a new phase of their course and submit it with submit_project: phase {id, title, brief (one sentence), project: "practice/<name>", skills (course skill ids it practises; new ones go in newSkills), segments: 2 to 8 milestone ids like "<id>-1"} and segment: milestone 1 (teachme.script/1). Fit it to what they know now: use the skills they practised, add only what the project needs.`,
+    PROJECT_RULES,
+    `Learner snapshot:\n${snapshot}`,
+    `Course:\n${JSON.stringify(course)}`,
+  ].join('\n\n')
+}
+
 export function authorTask(course: Course, example: Segment | undefined, snapshot: string, nextId: string, phaseTitle: string) {
+  const phase = course.phases.find(p => p.segments.includes(nextId))
+  const isLast = !!phase && !phase.project && phase.segments.length > 1 && phase.segments.at(-1) === nextId
   return [
     `Write segment "${nextId}" for the phase "${phaseTitle}".`,
+    phase?.project ? `It is milestone ${phase.segments.indexOf(nextId) + 1} of ${phase.segments.length} of the project "${phase.title}" (${phase.brief ?? ''}) in ${phase.project}. The example segment is the previous milestone.\n${PROJECT_RULES}` : '',
+    isLast ? `It is the last segment of this phase: make it a small project, a practice task that uses the phase's skills together (${phase!.skills.join(', ')}), with "uses" naming them.` : '',
     `Learner snapshot:\n${snapshot}`,
     `Course:\n${JSON.stringify(course)}`,
     example ? `Example segment (the format, and what the learner just did):\n${JSON.stringify(example)}` : '',

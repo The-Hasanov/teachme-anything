@@ -6,19 +6,19 @@ import * as python from '../courses/python'
 import * as sql from '../courses/sql'
 import type { EngineInterface, Register } from 'claude-code'
 
-import { checked, current, press, screen, setupDone, snapshot, taught } from './engine/engine'
+import { checked, current, level, press, screen, setupDone, snapshot, taught, withProject } from './engine/engine'
 import type { Ctx, Out } from './engine/engine'
 import { replay } from './engine/engine'
-import type { Course, Effect, LogEvent, Line, Press, Screen, Segment } from './engine/types'
+import type { Build, Course, Effect, LogEvent, Line, Phase, Press, ProjectPick, Screen, Segment } from './engine/types'
 import { skillState } from './engine/mastery'
 import { migrate } from './engine/migrate'
-import { validateCourse, validateSegment } from './engine/schema'
+import { milestoneErrors, untaught, validateCourse, validateProjectPhase, validateSegment } from './engine/schema'
 import { MANUAL, installPlan, isTool, probeEnv, runCommand, runProbes, scaffold } from './host/adapters'
 import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
 import { DIR, append, hasCourse, install, load, newLog, progressMarkdown } from './host/store'
 import type { Log } from './host/store'
-import { AUTHOR_MODEL, AUTHOR_PROMPT, GENERIC_INTAKE, SETUP_ADAPTERS, authorTask, courseTask, diagnose } from './host/teacher'
+import { AUTHOR_MODEL, AUTHOR_PROMPT, GENERIC_INTAKE, SETUP_ADAPTERS, authorTask, courseTask, diagnose, projectTask } from './host/teacher'
 import { verifySegment } from './host/verify'
 import { newVsCode, sendView, tick } from './host/vscode'
 import type { LayoutOp, VsCode } from './host/vscode'
@@ -29,7 +29,7 @@ const SPARK = '▁▂▃▄▅▆▇█'
 const OUT_ERR = /^(Traceback|\s+File "|\w*(Error|Exception)\b|error[:[]|fatal:|ERROR\b|FAIL\b)/
 const OUT_WARN = /^(warning[:[]|Warning\b|WARN\b|hint:)/i
 const TOOL = (name: string) => `mcp__${PLUGIN}__${name}`
-const OWN_TOOLS = new Set(['start_course', 'snapshot', 'progress', 'submit_segment', 'submit_course'].map(TOOL))
+const OWN_TOOLS = new Set(['start_course', 'snapshot', 'progress', 'submit_segment', 'submit_course', 'build_with_me', 'submit_project'].map(TOOL))
 
 const view = atom({ plugin: 'teachme-anything', key: 'screen' } as const, null, { shape: 'screen-1' })
 
@@ -46,6 +46,8 @@ type Session = {
   progress?: boolean
   busy?: string
   preparing?: string
+  prepAgent?: string
+  build?: Build & { open: boolean; agent?: string }
   lastProbes?: { id: string; ok: boolean; got: string }[]
   vscode?: VsCode
 }
@@ -60,8 +62,12 @@ async function deviceOf($: EngineInterface) {
 
 async function ctx($: EngineInterface): Promise<Ctx> {
   const s = sess!
-  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress }
+  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, preparing: !!s.preparing, build: s.build?.open ? s.build : undefined }
 }
+
+// One poller per folder: a second one would keep polling and dispatch every press twice
+const vsCodeFor = ($: EngineInterface, root: string) =>
+  sess?.vscode?.root === root ? sess.vscode : newVsCode(root, (p, t) => { void dispatch($, p, t) }, () => { void refresh($) })
 
 const practiceDir = (s: Session, seg?: Segment) => seg?.practice ? `${s.root}/${seg.practice.dir}` : undefined
 
@@ -94,6 +100,7 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
   const s = sess
   if (!s) return
   const t0 = await $.clock.now()
+  if (s.build?.open) return buildPress($, p)
   if ('action' in p && p.action === 'progress') { s.progress = true; return refresh($) }
   if (s.progress) { if ('action' in p && p.action === 'back') { s.progress = false; await refresh($) } return }
   if (s.welcome && 'action' in p && (p.action === 'continue' || p.action === 'curriculum')) {
@@ -139,7 +146,7 @@ async function run($: EngineInterface, fx: Effect) {
       return commit($, taught(await ctx($), fx.esc, d))
     }
     if (fx.kind === 'setup') return runSetup($)
-    if (fx.kind === 'practice') return ensurePractice($, fx.dir)
+    if (fx.kind === 'practice') return ensurePractice($, fx.dir, fx.seg)
     if (fx.kind === 'prepare') return prepare($, fx.after)
     if (fx.kind === 'remedy') return remedy($, fx.tag, fx.skill)
   } catch (err) {
@@ -149,13 +156,21 @@ async function run($: EngineInterface, fx: Effect) {
   }
 }
 
-async function ensurePractice($: EngineInterface, rel: string) {
+async function ensurePractice($: EngineInterface, rel: string, segId?: string) {
   const s = sess!
   const dir = `${s.root}/${rel}`
-  const seg = Object.values(s.segments).find(g => g.practice?.dir === rel)
+  const seg = (segId ? s.segments[segId] : undefined) ?? Object.values(s.segments).find(g => g.practice?.dir === rel)
   if (seg?.practice && !(await $.fs.exists(dir))) await scaffold($, dir, seg.practice.scaffold, s.os)
+  // The system's part of a milestone: boilerplate, wiring and tests, written once into the learner's folder
+  if (seg?.practice?.adds && !s.state.added[seg.id]) {
+    const bad = await scaffold($, dir, seg.practice.adds, s.os)
+    if (bad) { $.ui.log(`teachme: adds for ${seg.id} failed: ${bad}`, { to: 'debug' }); void metric($, { kind: 'adds-failed', seg: seg.id }) }
+    else await commit($, { events: [{ ts: await $.clock.now(), type: 'added', seg: seg.id }], effects: [] })
+  }
   await refresh($, { op: 'terminal', cwd: dir })
 }
+
+const inProject = (s: Session, segId: string) => !!s.course?.phases.some(p => p.project && p.segments.includes(segId))
 
 async function runSetup($: EngineInterface) {
   const s = sess!
@@ -179,7 +194,7 @@ async function runSetup($: EngineInterface) {
       await (version ? set(r.id, 'ok', version) : set(r.id, 'failed', `Install it from ${MANUAL[r.adapter] ?? 'its website'}, then press Set up again.`))
       if (!version) break
     } else if (r.adapter === 'practice') {
-      const segs = Object.values(s.segments).filter(g => g.practice)
+      const segs = Object.values(s.segments).filter(g => g.practice && !inProject(s, g.id))
       for (const g of segs) if (!(await $.fs.exists(`${s.root}/${g.practice!.dir}`))) {
         const bad = await scaffold($, `${s.root}/${g.practice!.dir}`, g.practice!.scaffold, s.os)
         if (bad) { await set(r.id, 'failed', bad); return }
@@ -228,11 +243,13 @@ async function prepare($: EngineInterface, after: string, target?: string) {
   if (!nextId || s.segments[nextId]) return
   const phase = s.course.phases.find(p => p.segments.includes(nextId))
   s.preparing = nextId
+  await refresh($)
   const r = await $.agent.spawn({
     subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: 'Teach Me: prepare the next lesson',
     prompt: authorTask(s.course, s.segments[after] ?? python.lists1, snapshot(await ctx($)), nextId, phase?.title ?? ''),
   })
-  if ('deny' in r && r.deny) { s.preparing = undefined; $.ui.log(`teachme: author not started: ${r.deny}`, { to: 'debug' }) }
+  if ('deny' in r && r.deny) { s.preparing = undefined; $.ui.log(`teachme: author not started: ${r.deny}`, { to: 'debug' }); await refresh($) }
+  else s.prepAgent = r.agentId
   void metric($, { kind: 'prepare', seg: nextId, started: !('deny' in r && r.deny) })
 }
 
@@ -242,6 +259,8 @@ async function submitSegment($: EngineInterface, input: { segment: unknown; newS
   const course: Course = input.newSkills?.length ? { ...s.course, skills: [...s.course.skills, ...input.newSkills.filter(k => !s.course!.skills.some(x => x.id === k.id))] } : s.course
   const seg = input.segment as Segment
   const errors = validateSegment(seg, course)
+  const project = course.phases.find(p => p.project && p.segments.includes(seg?.id))
+  if (!errors.length) errors.push(...untaught(seg, Object.values(s.segments)), ...(project ? milestoneErrors(seg, project, Object.values(s.segments)) : []))
   if (errors.length) return { ok: false, errors }
   const v = await verifySegment($, seg, s.os)
   if (!v.ok) return { ok: false, errors: v.errors }
@@ -262,9 +281,16 @@ async function open($: EngineInterface, root: string) {
   sess = {
     root, os: (await probeEnvCached($)).os, course: l.course, segments: l.segments, state: l.state,
     log: newLog(root, device), metrics: newLog(root, device, 'metrics'), welcome: l.state.stage === 'lesson', env: await probeEnvCached($),
+    vscode: vsCodeFor($, root),
   }
-  sess.vscode = newVsCode(root, (p, t) => { void dispatch($, p, t) }, () => { void refresh($) })
   await refresh($)
+  // A finished segment whose next one is missing: the author of an earlier session is gone, so write it now
+  const done = l.state.done
+  if (done && l.course) {
+    const order = l.course.phases.flatMap(p => p.segments)
+    const next = order[order.indexOf(done) + 1]
+    if (next && !l.segments[next]) void prepare($, done)
+  }
 }
 
 let envCache: Env | undefined
@@ -280,7 +306,7 @@ const LIBRARY: { match: RegExp; course: Course; segments: Segment[] }[] = [
   { match: /big[- ]?o\b|complexity/i, course: bigo.course, segments: bigo.segments },
 ]
 
-async function generateCourse($: EngineInterface, subject: string, root: string, background?: string) {
+async function generateCourse($: EngineInterface, subject: string, root: string, background?: string, project?: ProjectPick) {
   const env = await probeEnvCached($)
   const id = subject.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'course'
   const provisional: Course = { format: 'teachme.course/1', id, subject, goal: subject, intake: GENERIC_INTAKE, skills: [], phases: [], setup: [] }
@@ -288,20 +314,95 @@ async function generateCourse($: EngineInterface, subject: string, root: string,
   sess = {
     root, os: env.os, course: provisional, segments: {}, state: replay([]),
     log: newLog(root, device), metrics: newLog(root, device, 'metrics'), welcome: false, env, busy: 'Writing your course: about a minute.',
+    vscode: vsCodeFor($, root),
   }
-  sess.vscode = newVsCode(root, (p, t) => { void dispatch($, p, t) }, () => { void refresh($) })
   const t0 = await $.clock.now()
   await commit($, { events: [{ ts: t0, type: 'course', course: id }], effects: [] })
   await $.ui.open({ id: PANE, title: subject })
   const tools = Object.entries(env.tools).filter(([, v]) => v).map(([k, v]) => `${k} (${v})`).join(', ')
   const r = await $.agent.spawn({
     subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: `Teach Me: a new course on ${subject}`,
-    prompt: courseTask(subject, `${env.os}; ${tools || 'no developer tools found'}`, { course: python.course, segment: python.lists1 }, background),
+    prompt: courseTask(subject, `${env.os}; ${tools || 'no developer tools found'}`, { course: python.course, segment: python.lists1 }, background, project),
   })
   const started = !('deny' in r && r.deny)
   void metric($, { kind: 'generate', subject, started })
   if (!started) return { ok: false, reason: `the course author could not start: ${'deny' in r ? r.deny : ''}` }
   return { ok: true, course: subject, generating: true, ...(background ? { writtenFor: background } : {}), next: 'The lesson view asks 3 questions while a course is written for this learner (about a minute). Say one short line; nothing else to do.' }
+}
+
+async function buildWithMe($: EngineInterface, a: { suggestions?: ProjectPick[]; idea?: string; subject?: string }) {
+  const root = await $.session.cwd()
+  if (!sess && await hasCourse($, root)) await open($, root)
+  if (sess?.course && !sess.course.setup.length) return { ok: false, reason: 'The course is still being written. Try again in a minute.' }
+  if (sess?.build?.stage === 'planning') { sess.build.open = true; await refresh($); return { ok: true, planning: sess.build.title } }
+  if (!sess) {
+    const env = await probeEnvCached($)
+    const device = await deviceOf($)
+    sess = { root, os: env.os, segments: {}, state: replay([]), log: newLog(root, device), metrics: newLog(root, device, 'metrics'), welcome: false, env, vscode: vsCodeFor($, root) }
+  }
+  const suggestions = (Array.isArray(a.suggestions) ? a.suggestions : []).filter(x => typeof x?.title === 'string' && typeof x?.pitch === 'string').slice(0, 4)
+  sess.build = { stage: 'pick', suggestions, open: true }
+  await $.ui.open({ id: PANE, title: 'Build with me' })
+  const idea = a.idea?.trim()
+  if (idea) await planProject($, { title: idea.slice(0, 120), pitch: idea.slice(0, 300), ...(a.subject ? { subject: a.subject } : {}) })
+  else await refresh($)
+  return { ok: true, next: idea ? 'The project is being planned (about a minute). Say one short line; nothing else to do.' : 'The learner picks a project in the lesson view, or types their own. Say one short line; nothing else to do.' }
+}
+
+async function buildPress($: EngineInterface, p: Press) {
+  const s = sess!
+  const b = s.build!
+  if ('action' in p && p.action === 'back') {
+    if (b.stage === 'planning') b.open = false
+    else s.build = undefined
+    return refresh($)
+  }
+  if (b.stage !== 'pick') return
+  const text = 'text' in p ? p.text.trim() : ''
+  const pick = 'choose' in p ? b.suggestions[p.choose - 1] : text ? { title: text.slice(0, 120), pitch: text.slice(0, 300) } : undefined
+  if (pick) await planProject($, pick)
+}
+
+async function planProject($: EngineInterface, pick: ProjectPick) {
+  const s = sess!
+  void metric($, { kind: 'build-pick', title: pick.title, own: !s.build?.suggestions.includes(pick) })
+  // No course here yet: write one that leads to this project
+  if (!s.course) { s.build = undefined; await generateCourse($, pick.subject ?? pick.title, s.root, undefined, pick); return }
+  s.build = { ...s.build!, stage: 'planning', title: pick.title, open: true, note: undefined }
+  await refresh($)
+  const r = await $.agent.spawn({
+    subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: 'Teach Me: plan a project to build together',
+    prompt: projectTask(s.course, snapshot(await ctx($)), pick),
+  })
+  if ('deny' in r && r.deny) { s.build = { ...s.build, stage: 'pick', note: 'Planning could not start. Pick again.' }; return refresh($) }
+  s.build.agent = r.agentId
+}
+
+async function submitProject($: EngineInterface, input: { phase: unknown; segment: unknown; newSkills?: Course['skills'] }) {
+  const s = sess
+  if (!s?.course) return { ok: false, errors: ['no course in this folder'] }
+  const phase = input.phase as Phase
+  const errors = validateProjectPhase(phase, s.course, input.newSkills ?? [])
+  // Fit the learner's level: once they have answers, a project may bring in one skill they have not started, not more
+  const lv = level(await ctx($))
+  const fresh = Array.isArray(phase?.skills) ? phase.skills.filter(k => lv.notStarted.includes(k) || (input.newSkills ?? []).some(n => n.id === k)) : []
+  if (lv.answers && fresh.length > 1) errors.push(`phase.skills has ${fresh.length} skills the learner has not started (${fresh.join(', ')}): at most one, taught before its task. They can use: ${lv.canUse.join(', ') || 'nothing yet'}`)
+  if (!errors.length && (input.segment as Segment)?.id !== phase.segments[0]) errors.push(`segment must be the first milestone, "${phase.segments[0]}"`)
+  if (errors.length) return { ok: false, errors }
+  const before = s.course
+  s.course = { ...before, phases: withProject(before, s.state, { id: phase.id, title: phase.title, brief: phase.brief, project: phase.project, skills: phase.skills, segments: phase.segments }) }
+  const r = await submitSegment($, { segment: input.segment, ...(input.newSkills ? { newSkills: input.newSkills } : {}) })
+  if (!r.ok) { s.course = before; return r }
+  void metric($, { kind: 'project', phase: phase.id, milestones: phase.segments.length })
+  const stage = s.state.stage
+  if ((stage === 'curriculum' || stage === 'recap') && (s.state.done || !s.state.pos)) {
+    s.build = undefined
+    await commit($, press(await ctx($), { action: 'start' }))
+  } else if (s.build) {
+    s.build = { ...s.build, stage: 'ready', title: phase.title, open: true }
+    await refresh($)
+  }
+  return { ok: true, id: phase.id, next: `Milestone 1 is installed. The next milestones are asked for as the learner gets there; nothing else to do now.` }
 }
 
 async function submitCourse($: EngineInterface, input: { course: unknown }) {
@@ -379,11 +480,28 @@ export async function lessonRegister($: EngineInterface) {
     inputSchema: { type: 'object', properties: { segment: { type: 'object' }, newSkills: { type: 'array', items: { type: 'object' } } }, required: ['segment'] },
   })
   await $.tool.register({
+    name: 'build_with_me', isDeferred: false,
+    description: 'Teach Me: build a project together with the learner ("build with me"). Pass 3 project suggestions that fit their course and level, or the idea they named. The lesson view shows the choice; the project becomes the next phase of their course, milestone by milestone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        suggestions: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, pitch: { type: 'string', description: 'One sentence: what it does and what they practise' }, subject: { type: 'string', description: 'Language or stack, e.g. "Rust"' } }, required: ['title', 'pitch'] } },
+        idea: { type: 'string', description: 'The project the learner already named, in their words' },
+        subject: { type: 'string', description: 'Language or stack for their idea, when there is no course in this folder' },
+      },
+    },
+  })
+  await $.tool.register({
+    name: 'submit_project',
+    description: 'Teach Me author: submit a build-with-me project as a phase (id, title, brief, project folder, skills, milestone ids) with its first milestone segment. Validated and checked; returns {ok} or {errors}.',
+    inputSchema: { type: 'object', properties: { phase: { type: 'object' }, segment: { type: 'object' }, newSkills: { type: 'array', items: { type: 'object' } } }, required: ['phase', 'segment'] },
+  })
+  await $.tool.register({
     name: 'submit_course',
     description: 'Teach Me author: submit a new course (teachme.course/1) for the subject the learner asked for. It is validated; returns {ok, next} or {errors}.',
     inputSchema: { type: 'object', properties: { course: { type: 'object' } }, required: ['course'] },
   })
-  await $.agent.register({ name: 'author', description: 'Writes Teach Me courses and lesson segments for one learner.', prompt: AUTHOR_PROMPT, tools: [TOOL('submit_course'), TOOL('submit_segment')], model: AUTHOR_MODEL })
+  await $.agent.register({ name: 'author', description: 'Writes Teach Me courses and lesson segments for one learner.', prompt: AUTHOR_PROMPT, tools: [TOOL('submit_course'), TOOL('submit_segment'), TOOL('submit_project')], model: AUTHOR_MODEL })
     .catch(err => $.ui.log(`teachme: author agent: ${err}`, { to: 'debug' }))
 }
 
@@ -466,6 +584,26 @@ export const registerLesson: Register = on => {
   })
   on('tool.call', { tool: 'mcp__teachme-anything__submit_segment' }, async ($, e) => ({ result: JSON.stringify(await submitSegment($, e as never)) }))
   on('tool.call', { tool: 'mcp__teachme-anything__submit_course' }, async ($, e) => ({ result: JSON.stringify(await submitCourse($, e as never)) }))
+  on('tool.call', { tool: 'mcp__teachme-anything__build_with_me' }, async ($, e) => ({ result: JSON.stringify(await buildWithMe($, e as never)) }))
+  on('tool.call', { tool: 'mcp__teachme-anything__submit_project' }, async ($, e) => ({ result: JSON.stringify(await submitProject($, e as never)) }))
+
+  // The author of the next segment ended without a valid submit_segment: say so and offer a retry
+  on('turn.complete', async ($, e, next) => {
+    const s = sess
+    if (s?.build?.stage === 'planning' && e.agentId && e.agentId === s.build.agent) {
+      void metric($, { kind: 'project-failed', title: s.build.title })
+      s.build = { ...s.build, stage: 'pick', open: true, note: 'Planning did not work this time. Pick again, or describe it another way.' }
+      await refresh($)
+    }
+    if (s?.preparing && e.agentId && e.agentId === s.prepAgent) {
+      $.ui.log(`teachme: the author ended without segment ${s.preparing}`, { to: 'debug' })
+      void metric($, { kind: 'prepare-failed', seg: s.preparing })
+      s.preparing = undefined
+      s.prepAgent = undefined
+      await refresh($)
+    }
+    return next(e)
+  })
 
   on('prompt.submit', async ($, e, next) => {
     if (!sess?.course || !e.text || e.text.startsWith('<')) return next(e)
@@ -478,7 +616,9 @@ export const registerLesson: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Markdown, Code } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text, Button, Markdown, Code } = ui
+    const Input = 'Input' in ui ? ui.Input : undefined
     const sc = await read($, view)
     if (!sc) return <Text dimColor>Say "teach me &lt;subject&gt;" to start.</Text>
     const go = (p: Press) => () => { void dispatch($, p) }
@@ -561,13 +701,14 @@ export const registerLesson: Register = on => {
           <Box key={`choice-${ch.n}`} flexDirection="column">
             {ch.used
               ? <Text dimColor>✓ {ch.n}  {ch.text}</Text>
-              : ch.mark || sc.result
+              : ch.mark || (sc.result && sc.result.tone !== 'info')
               ? <Text color={ch.mark === 'right' || ch.mark === 'key' ? 'success' : ch.mark === 'wrong' ? 'warning' : undefined} dimColor={!ch.mark}>{ch.mark === 'right' ? '✓' : ch.mark === 'wrong' ? '✗' : ch.mark === 'key' ? '→' : ' '} {ch.n}  {ch.text}</Text>
               : <Button key={`choose-${ch.n}`} hotkey={String(ch.n)} plain onPress={go({ choose: ch.n })}>{ch.text}</Button>}
             {ch.code && ch.code.trim() !== ch.text.trim() && <Box paddingX={2}><Code source={ch.code} wrap="wrap" /></Box>}
             {ch.mark && ch.why && <Text dimColor>    {ch.why}</Text>}
           </Box>
         ))}
+        {sc.input && Input && <Input key="intake-text" placeholder={sc.input.placeholder} submitLabel="send" onSubmit={(v: string) => { if (v.trim()) void dispatch($, { text: v }) }} />}
         {sc.hint && <Text color="suggestion">Hint {sc.hint.level}: {sc.hint.text}</Text>}
         {sc.result && <Text color={tone(sc.result.tone)} italic={sc.result.tone === 'wait'}>{sc.result.tone === 'right' ? '✓ ' : sc.result.tone === 'wrong' ? '✗ ' : ''}{sc.result.text}</Text>}
         {sc.actions.length > 0 && (

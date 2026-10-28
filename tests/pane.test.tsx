@@ -130,7 +130,10 @@ test('a subject with no course: the intake runs while the author writes the cour
     format: 'teachme.script/1', id: 'basics-1', title: 'Pods', skills: ['pods'],
     steps: [{ id: 'k1', kind: 'mcq', skill: 'pods', difficulty: 1, title: 'A pod', body: 'What does a pod run?', choices: [{ text: 'Containers', why: 'Right.' }, { text: 'Clusters', why: 'A cluster runs pods.' }], key: [0] }],
   }
-  expect(JSON.parse((await $.tool.call({ tool: 'mcp__teachme-anything__submit_segment', segment: seg } as never)).result as string)).toMatchObject({ ok: true })
+  const submitSeg = async (segment: unknown) => JSON.parse((await $.tool.call({ tool: 'mcp__teachme-anything__submit_segment', segment } as never)).result as string)
+  expect((await submitSeg(seg)).errors.join(' ')).toMatch(/skill pods is tested before .* explains it/)
+  const intro = { id: 'k0', kind: 'concept', skill: 'pods', difficulty: 1, title: 'Pods', body: 'A pod runs one or more containers together.' }
+  expect(await submitSeg({ ...seg, steps: [intro, ...seg.steps] })).toMatchObject({ ok: true })
   expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Start Pods', 'Progress'])
   await ui.unmount()
 })
@@ -252,5 +255,46 @@ test('a Python code task in the terminal pane: where to work, a mistake caught, 
   w.files[stats] = 'def top_three(nums):\n    return sorted(nums, reverse=True)[:3]\n'
   await ui.press({ key: 'act-check' })
   expect(await texts()).toContain('✓ Done. That is the result the task asked for.')
+  await ui.unmount()
+})
+
+test('build with me: pick a suggested project, it is planned into the course, and milestone 1 starts with the system part written', async ($, on) => {
+  const todo = `${ROOT}/practice/todo`
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) =>
+    argv.join(' ') === 'python -m unittest' ? { exitCode: (w.files[`${cwd}/todo.py`] ?? '').includes('items.append') ? 0 : 1, stdout: '' } : machine(w.files)(argv, cwd))
+  const spawned: string[] = []
+  on('agent.spawn', (_, e) => { spawned.push(e.prompt); return { model: 'sonnet', agentId: `a${spawned.length}` } })
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Big-O' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  for (const key of ['choose-1', 'choose-1', 'choose-1', 'act-setup', 'act-continue']) await ui.press({ key })
+
+  const suggestions = [{ title: 'Todo CLI', pitch: 'a todo list that stays fast as it grows' }, { title: 'Search', pitch: 'binary search over your notes' }]
+  await $.tool.call({ tool: 'mcp__teachme-anything__build_with_me', suggestions } as never)
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Todo CLI: a todo list that stays fast as it grows', 'Search: binary search over your notes', 'Not now'])
+  await ui.press({ key: 'choose-1' })
+  expect(spawned.at(-1)).toMatch(/"Todo CLI"[\s\S]*submit_project/)
+  expect(await ui.find({ type: 'Text', text: /Planning the milestones/ })).toBeTruthy()
+
+  const submit = async (phase: unknown, segment: unknown) => JSON.parse((await $.tool.call({ tool: 'mcp__teachme-anything__submit_project', phase, segment } as never)).result as string)
+  const phase = { id: 'todo', title: 'Todo CLI', brief: 'A todo list on the command line', project: 'practice/todo', skills: ['count-steps'], segments: ['todo-1', 'todo-2'] }
+  const task = { id: 't2', kind: 'code', skill: 'count-steps', difficulty: 1, title: 'Write add()', body: 'Make add() keep the item.', open: 'todo.py',
+    check: { probes: [{ id: 'tests', argv: ['python', '-m', 'unittest'], expect: { exitCode: 0 } }], reference: [['@write', 'todo.py', 'items = []\ndef add(x):\n    items.append(x)\n']] } }
+  const m1 = {
+    format: 'teachme.script/1', id: 'todo-1', title: 'Add an item', skills: ['count-steps'],
+    practice: { adapter: 'python', dir: 'practice/todo', scaffold: [['@write', 'todo.py', 'items = []\ndef add(x):\n    pass\n']], adds: [['@write', 'test_todo.py', 'import todo\n']] },
+    steps: [{ id: 't1', kind: 'concept', skill: 'count-steps', difficulty: 1, title: 'A list in memory', body: 'add() appends to items.' }, task],
+  }
+  expect((await submit(phase, m1)).errors.join(' ')).toMatch(/uses an earlier skill|tested before/)
+  expect((await submit(phase, { ...m1, practice: { ...m1.practice, adds: [['@write', 'todo.py', 'x']] }, steps: [m1.steps[0], { ...task, uses: ['growth-order'] }] })).errors.join(' ')).toMatch(/adds writes todo.py, a file the learner writes/)
+  expect(await submit(phase, { ...m1, steps: [m1.steps[0], { ...task, uses: ['growth-order'] }] })).toMatchObject({ ok: true, id: 'todo' })
+
+  for (let i = 0; i < 50 && !Object.keys(w.files).some(k => k.includes('/.teachme/log/') && w.files[k]!.includes('"added"')); i++) await ui.findAll({ type: 'Text' })
+  const course = JSON.parse(w.files[`${ROOT}/.teachme/course.json`]!)
+  expect(course.phases.map((p: { id: string }) => p.id)).toEqual(['todo', 'basics'])
+  expect(w.files[`${todo}/todo.py`]).toContain('pass')
+  expect(w.files[`${todo}/test_todo.py`]).toBe('import todo\n')
+  expect(await ui.find({ type: 'Text', text: 'A list in memory' })).toBeTruthy()
+  expect(w.files[`${ROOT}/.teachme/log`] ?? Object.entries(w.files).find(([k]) => k.includes('/.teachme/log/'))?.[1]).toMatch(/"type":"added","seg":"todo-1"/)
   await ui.unmount()
 })

@@ -20,6 +20,8 @@ export async function verifySegment($: EngineInterface, seg: Segment, os: Os): P
   try {
     const bad = seg.practice ? await scaffold($, dir, seg.practice.scaffold, os) : (await mkdirp($, dir, os), undefined)
     if (bad) return { ok: false, errors: [`scaffold failed: ${bad}`], ms: (await $.clock.now()) - t0 }
+    const badAdds = seg.practice?.adds ? await scaffold($, dir, seg.practice.adds, os) : undefined
+    if (badAdds) return { ok: false, errors: [`practice.adds failed: ${badAdds}`], ms: (await $.clock.now()) - t0 }
     for (const step of examples) errors.push(...await verifyExample($, dir, step))
     for (const step of seg.steps) {
       if (!step.check) continue

@@ -55,7 +55,7 @@
   const output = (s) => String(s).split('\n').map(l => OUT_ERR.test(l) ? `<span class="t-err">${esc(l)}</span>` : OUT_WARN.test(l) ? `<span class="t-warn">${esc(l)}</span>` : esc(l)).join('\n');
   const icon = (name, label) => `<span class="codicon codicon-${name}" ${label ? `aria-label="${esc(label)}" role="img"` : 'aria-hidden="true"'}></span>`;
   const MARK = { ok: ['pass', 'done'], todo: ['circle-large-outline', 'to do'], fail: ['warning', 'needs attention'], run: ['loading', 'running'], now: ['circle-large-filled', 'current'] };
-  const KEY = { enter: 'Enter', h: 'H', a: 'A', b: 'B', g: 'G', p: 'P', u: 'U', s: 'S', left: '←' };
+  const KEY = { enter: 'Enter', h: 'H', a: 'A', b: 'B', g: 'G', p: 'P', u: 'U', s: 'S', d: 'D', left: '←' };
   const markIcon = (m) => m === 'right' ? icon('pass', 'right') : m === 'wrong' ? icon('close', 'not right') : '';
 
   function send(press) {
@@ -98,7 +98,7 @@
     if (s.chart) out.push(chart(s.chart));
     if (s.groups) out.push(s.groups.map(g => `<h2>${esc(g.title)}</h2>${lines(g.lines)}`).join(''));
     if (s.choices) {
-      const answered = s.choices.some(c => c.mark) || (s.result && s.kind === 'question');
+      const answered = s.choices.some(c => c.mark) || (s.result && s.result.tone !== 'info' && s.kind === 'question');
       out.push(`<div class="choices" role="group" aria-label="Choices">${s.choices.map(c => {
         const cls = c.mark ?? (answered || c.used ? 'dim' : '');
         if (c.used) return `<button class="choice used" data-choose="${c.n}" disabled aria-label="${c.n}: ${esc(c.text)}, placed"><span class="n">${icon('check')}</span><span>${c.code ? `<code>${esc(c.code)}</code>` : esc(c.text)}</span></button>`;
@@ -106,6 +106,7 @@
         return `<button class="choice ${cls}" data-choose="${c.n}" ${answered ? 'disabled' : ''} aria-label="${c.n}: ${esc(c.text)}${state}"><span class="n">${c.mark === 'right' || c.mark === 'key' ? icon('pass') : c.mark === 'wrong' ? icon('close') : c.n}</span>${c.code ? `<pre><code>${hl(c.code, lang)}</code></pre>` : `<span>${esc(c.text)}</span>`}${c.mark && c.why ? `<span class="why">${esc(c.why)}</span>` : ''}</button>`;
       }).join('')}</div>`);
     }
+    if (s.input) out.push(`<form class="other"><input type="text" maxlength="300" aria-label="${esc(s.input.placeholder)}" placeholder="${esc(s.input.placeholder)}"><button class="btn" type="submit">Send</button></form>`);
     if (s.where) out.push(`<p class="where">${icon('terminal')} ${s.where.file ? `<code>${esc(s.where.file)}</code> is open in your editor; the Teach Me terminal is in` : 'The Teach Me terminal is in'} <code>${esc(s.where.dir)}</code></p>`);
     if (s.hint) out.push(`<div class="hint"><strong>Hint ${s.hint.level}.</strong> ${esc(s.hint.text)}</div>`);
     const r = s.result;
@@ -120,6 +121,7 @@
     if (!isNew) window.scrollTo(0, y);
     root.querySelectorAll('[data-action]').forEach(b => b.onclick = () => send({ action: b.dataset.action }));
     root.querySelectorAll('[data-choose]').forEach(b => b.onclick = () => send({ choose: Number(b.dataset.choose) }));
+    root.querySelectorAll('form.other').forEach(f => f.onsubmit = (e) => { e.preventDefault(); const text = f.querySelector('input').value.trim(); if (text) send({ text }); });
     if (!connected) root.querySelectorAll('button').forEach(b => { b.disabled = true; });
   }
 
@@ -137,7 +139,7 @@
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey || e.metaKey || e.altKey || !screen) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || !screen || e.target.tagName === 'INPUT') return;
     const k = e.key === 'ArrowLeft' ? 'left' : e.key.toLowerCase();
     const has = (id) => screen.actions.some(a => a.id === id);
     if (/^[1-8]$/.test(k) && screen.choices?.some(c => c.n === Number(k)) && !screen.choices.some(c => c.mark)) { send({ choose: Number(k) }); e.preventDefault(); return; }

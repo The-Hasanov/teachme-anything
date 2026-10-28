@@ -1,7 +1,7 @@
 import { RETENTION, dueAt, ratingOf, retrievability, review } from './fsrs'
 import { classify, skillState } from './mastery'
 import { WINDOW, pct, stats } from './stats'
-import type { Action, Course, Effect, LearnerState, LogEvent, MistakeClass, Press, Screen, Segment, Step, WarmItem, Weakness } from './types'
+import type { Action, Build, Course, Effect, LearnerState, LogEvent, MistakeClass, Phase, Press, Screen, Segment, Step, WarmItem, Weakness } from './types'
 
 export type Ctx = {
   state: LearnerState
@@ -11,6 +11,8 @@ export type Ctx = {
   welcome?: boolean
   busy?: string
   progress?: boolean
+  preparing?: boolean
+  build?: Build
 }
 
 export type Out = { events: LogEvent[]; effects: Effect[] }
@@ -24,16 +26,18 @@ const QUESTION_KINDS = new Set(['predict', 'mcq', 'reorder', 'spot-bug', 'trace'
 const TASK_KINDS = new Set(['terminal', 'code', 'stage', 'review'])
 
 export const initial = (): LearnerState => ({
-  stage: 'intake', intake: {}, setup: {}, tries: {}, hints: {}, result: {}, solved: {},
+  stage: 'intake', intake: {}, setup: {}, tries: {}, hints: {}, result: {}, solved: {}, idk: {}, gated: {}, added: {},
   evidence: [], mistakes: [], aside: false, asked: {}, migrated: [], notes: [], draft: {}, frame: {}, cards: {}, weak: {}, drills: {},
 })
 
-type Outcome = { ts: number; step: string; ok: boolean; skill?: string; hints: number; cls?: MistakeClass; tag?: string; prereq?: string; remedy?: string; review?: string }
+type Outcome = { ts: number; step: string; ok: boolean; skill?: string; hints: number; cls?: MistakeClass; tag?: string; prereq?: string; remedy?: string; review?: string; uses?: string[] }
 
 function learn(s: LearnerState, o: Outcome): Pick<LearnerState, 'cards' | 'weak'> {
   const cards = { ...s.cards }
   const weak = { ...s.weak }
   if (o.skill) cards[`skill:${o.skill}`] = review(cards[`skill:${o.skill}`], ratingOf(o.ok, o.hints), o.ts)
+  // Using earlier skills right inside a new task counts as a review of them; a miss is put on the new skill only
+  if (o.ok) for (const u of o.uses ?? []) if (u !== o.skill) cards[`skill:${u}`] = review(cards[`skill:${u}`], ratingOf(true, o.hints), o.ts)
   const open = (key: string, skill: string | undefined, tag: string | undefined, cls: MistakeClass) => {
     const w = weak[key]
     weak[key] = { key, skill, tag, cls, count: (w?.count ?? 0) + 1, status: 'open', steps: [...new Set([...(w?.steps ?? []), o.step])], used: w?.used ?? [], last: o.ts }
@@ -63,17 +67,25 @@ export function apply(s: LearnerState, e: LogEvent): LearnerState {
   switch (e.type) {
     case 'course': return { ...s, course: e.course, stage: 'intake' }
     case 'intake': return { ...s, intake: { ...s.intake, [e.q]: e.a } }
-    case 'stage': return { ...s, stage: e.stage }
+    case 'stage': return { ...s, stage: e.stage, ...(e.stage === 'recap' && s.pos ? { done: s.pos.back?.seg ?? s.pos.seg } : {}) }
     case 'setup': return { ...s, setup: { ...s.setup, [e.req]: { status: e.status, note: e.note } } }
     case 'enter': {
       const back = typeof e.back === 'number' ? { seg: e.seg, step: e.back } : e.back
       const weak = e.drill && s.weak[e.drill] ? { ...s.weak, [e.drill]: { ...s.weak[e.drill]!, used: [...s.weak[e.drill]!.used, `${e.seg}/${e.step}`] } } : s.weak
       const drills = e.from ? { ...s.drills, [e.from]: (s.drills[e.from] ?? 0) + 1 } : s.drills
-      return { ...s, pos: { seg: e.seg, step: e.step, ...(back ? { back } : {}) }, aside: false, weak, drills, since: e.ts }
+      return { ...s, pos: { seg: e.seg, step: e.step, ...(back ? { back } : {}) }, aside: false, weak, drills, since: e.ts, done: undefined }
     }
-    case 'warm': return { ...s, since: e.ts, warm: e.items.length ? { items: e.items, i: 0, n: (s.warm?.n ?? 0) + 1 } : s.warm && { ...s.warm, items: [], i: 0 } }
+    case 'warm': return {
+      ...s, since: e.ts, gated: e.gate ? { ...s.gated, [e.gate]: true } : s.gated,
+      warm: e.items.length ? { items: e.items, i: 0, n: (s.warm?.n ?? 0) + 1, ...(e.gate ? { gate: e.gate } : {}) } : s.warm && { ...s.warm, items: [], i: 0 },
+    }
     case 'warm-next': return { ...s, since: e.ts, warm: s.warm && s.warm.i + 1 < s.warm.items.length ? { ...s.warm, i: s.warm.i + 1 } : s.warm && { ...s.warm, items: [], i: 0 } }
     case 'skip': return s
+    case 'added': return { ...s, added: { ...s.added, [e.seg]: true } }
+    case 'dontknow': return {
+      ...s, ...(e.skill ? learn(s, { ts: e.ts, step: e.step, ok: false, skill: e.skill, hints: 0, cls: 'prereq' }) : {}),
+      idk: { ...s.idk, [e.step]: e.skill ?? '' }, since: e.ts,
+    }
     case 'aside': return { ...s, aside: e.on, asked: e.on && e.step ? { ...s.asked, [e.step]: true } : s.asked }
     case 'hint': return { ...s, hints: { ...s.hints, [e.step]: e.level } }
     case 'pick': return { ...s, draft: { ...s.draft, [e.step]: e.picked } }
@@ -89,7 +101,7 @@ export function apply(s: LearnerState, e: LogEvent): LearnerState {
       const rk = e.rk ?? e.step
       return {
         ...s,
-        ...learn(s, { ts: e.ts, step: e.step, ok, skill: e.skill, hints: e.hints, cls: e.class, tag: e.tag, prereq: e.prereq, remedy: e.remedy, review: e.review }),
+        ...learn(s, { ts: e.ts, step: e.step, ok, skill: e.skill, hints: e.hints, cls: e.class, tag: e.tag, prereq: e.prereq, remedy: e.remedy, review: e.review, uses: e.uses }),
         tries: tries(rk),
         result: { ...s.result, [rk]: { tone: ok ? 'right' : 'wrong', text: e.feedback, picked: e.picked, branch: e.branch } },
         solved: ok ? { ...s.solved, [rk]: true } : s.solved,
@@ -107,7 +119,7 @@ export function apply(s: LearnerState, e: LogEvent): LearnerState {
       const known = e.ok || !e.pending
       return {
         ...s,
-        ...(known ? learn(s, { ts: e.ts, step: e.step, ok: e.ok, skill: e.skill, hints: e.hints, cls: e.class, tag: e.tag, prereq: e.prereq, remedy: e.remedy, review: e.review }) : {}),
+        ...(known ? learn(s, { ts: e.ts, step: e.step, ok: e.ok, skill: e.skill, hints: e.hints, cls: e.class, tag: e.tag, prereq: e.prereq, remedy: e.remedy, review: e.review, uses: e.uses }) : {}),
         tries: tries(e.step),
         result: { ...s.result, [e.step]: result },
         solved: e.ok ? { ...s.solved, [e.step]: true } : s.solved,
@@ -161,13 +173,15 @@ const prereqOf = (c: Ctx, skill?: string, tag?: string) =>
 const graded = (c: Ctx, at: At) => ({
   skill: at.step.skill, difficulty: at.step.difficulty, unseen: at.step.unseen && !c.state.asked?.[at.step.id], hints: c.state.hints[at.step.id] ?? 0,
   ...(at.step.remedy ? { remedy: at.step.remedy } : {}),
+  ...(at.step.uses?.length ? { uses: at.step.uses } : {}),
   ...(at.warm ? { review: at.warm.key, rk: resultKey(c, at) } : {}),
 })
 
 function enter(c: Ctx, seg: string, step: number, extra: { back?: { seg: string; step: number }; from?: string; drill?: string } = {}): Out {
   const s = c.segments[seg]
   const events: LogEvent[] = [{ ts: c.now, type: 'enter', seg, step, ...extra }]
-  const effects: Effect[] = s?.practice && step === 0 && !extra.back ? [{ kind: 'practice', dir: s.practice.dir }] : []
+  const fresh = !!s?.practice?.adds && !c.state.added[seg]
+  const effects: Effect[] = s?.practice && ((step === 0 && !extra.back) || fresh) ? [{ kind: 'practice', dir: s.practice.dir, seg }] : []
   const order = c.course ? segmentOrder(c.course) : []
   const next = order[order.indexOf(seg) + 1]
   const left = s ? s.steps.slice(step + 1).filter(x => !x.drill).length : 0
@@ -199,6 +213,9 @@ function advance(c: Ctx, skipBranch = false): Out {
   const from = back && skipBranch ? { seg: c.segments[back.seg]!, index: back.step } : { seg, index }
   const nextIndex = from.seg.steps.findIndex((x, i) => i > from.index && !x.drill)
   if (nextIndex >= 0) return enter(c, from.seg.id, nextIndex)
+  // Before the next segment: one more go at what is still open in this one, once
+  const gate = c.state.gated[from.seg.id] ? [] : dueItems(c).filter(i => c.state.weak[i.key]?.status === 'open' && from.seg.skills.includes(c.state.weak[i.key]!.skill ?? ''))
+  if (gate.length) return { events: [{ ts: c.now, type: 'warm', items: gate, gate: from.seg.id }], effects: [] }
   const order = c.course ? segmentOrder(c.course) : []
   const nextSeg = order[order.indexOf(from.seg.id) + 1]
   if (nextSeg && c.segments[nextSeg]) return enter(c, nextSeg, 0)
@@ -297,8 +314,9 @@ export function press(c: Ctx, p: Press): Out {
   }
   if (s.stage === 'intake') {
     const q = c.course.intake.find(x => s.intake[x.id] === undefined)
-    if (!q || !('choose' in p) || !q.options[p.choose - 1]) return NONE
-    const events: LogEvent[] = [{ ts: c.now, type: 'intake', q: q.id, a: p.choose - 1 }]
+    const a = !q ? undefined : 'choose' in p ? (q.options[p.choose - 1] !== undefined ? p.choose - 1 : undefined) : 'text' in p ? p.text.trim().slice(0, 300) || undefined : undefined
+    if (!q || a === undefined) return NONE
+    const events: LogEvent[] = [{ ts: c.now, type: 'intake', q: q.id, a }]
     const isLast = c.course.intake.filter(x => s.intake[x.id] === undefined).length === 1
     if (isLast) events.push({ ts: c.now, type: 'stage', stage: 'setup' })
     return { events, effects: [] }
@@ -309,25 +327,31 @@ export function press(c: Ctx, p: Press): Out {
     if (action === 'continue' && setupDone(c)) return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
     return NONE
   }
-  if (s.stage === 'curriculum') {
-    if (action !== 'start') return NONE
-    const first = segmentOrder(c.course).find(id => c.segments[id])
-    if (!first) return NONE
-    const go = s.pos ? enter(c, s.pos.seg, s.pos.step, s.pos.back ? { back: s.pos.back } : {}) : enter(c, first, 0)
-    return { events: [{ ts: c.now, type: 'stage', stage: 'lesson' }, ...go.events], effects: go.effects }
+  if (s.stage === 'curriculum' || s.stage === 'recap') {
+    if (action === 'start') {
+      const go = resume(c)
+      return go ? { events: [{ ts: c.now, type: 'stage', stage: 'lesson' }, ...go.events], effects: go.effects } : NONE
+    }
+    if (action === 'retry' && s.done && ahead(c) === 'missing') return { events: [], effects: [{ kind: 'prepare', after: s.done }] }
+    if (action === 'curriculum' && s.stage === 'recap') return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
+    return NONE
   }
-  if (s.stage === 'recap') return action === 'curriculum' ? { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] } : NONE
   const at = current(c)
   if (!at) return NONE
   const { step } = at
   if (at.warm) {
     if ('choose' in p) return answer(c, at, p.choose)
-    if ((action === 'next' && s.result[resultKey(c, at)]) || action === 'skip') return { events: [{ ts: c.now, type: action === 'skip' ? 'warm' : 'warm-next', items: [] } as LogEvent], effects: [] }
-    return NONE
+    if (!((action === 'next' && s.result[resultKey(c, at)]) || action === 'skip')) return NONE
+    const ev = { ts: c.now, type: action === 'skip' ? 'warm' : 'warm-next', items: [] } as LogEvent
+    const after = { ...c, state: apply(s, ev) }
+    // The end of a check before the next segment goes straight on to it
+    if (s.warm?.gate && !current(after)?.warm) { const go = advance(after); return { events: [ev, ...go.events], effects: go.effects } }
+    return { events: [ev], effects: [] }
   }
   if (action === 'ask') return { events: [{ ts: c.now, type: 'aside', on: true, step: step.id }], effects: [{ kind: 'ask' }] }
   if (action === 'back') return { events: [{ ts: c.now, type: 'aside', on: false }], effects: [] }
   if (action === 'curriculum') return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
+  if (action === 'dontknow' && step.choices && !s.result[step.id] && s.idk[step.id] === undefined) return { events: [{ ts: c.now, type: 'dontknow', step: step.id, ...(step.skill ? { skill: step.skill } : {}) }], effects: [] }
   if ('choose' in p) return answer(c, at, p.choose)
   const draft = s.draft[step.id] ?? []
   if ((action === 'undo' || action === 'clear') && draft.length && !s.result[step.id]) return { events: [{ ts: c.now, type: 'pick', step: step.id, picked: action === 'undo' ? draft.slice(0, -1) : [] }], effects: [] }
@@ -346,8 +370,28 @@ export function press(c: Ctx, p: Press): Out {
   return NONE
 }
 
+// Where Continue leads: the kept step, or the next segment once the last one is finished
+function resume(c: Ctx): Out | undefined {
+  const s = c.state
+  if (s.done) {
+    const next = nextSegment(c, s.done)
+    return next && c.segments[next] ? enter(c, next, 0) : undefined
+  }
+  if (s.pos) return enter(c, s.pos.seg, s.pos.step, s.pos.back ? { back: s.pos.back } : {})
+  const first = c.course && segmentOrder(c.course).find(id => c.segments[id])
+  return first ? enter(c, first, 0) : undefined
+}
+
+const nextSegment = (c: Ctx, seg: string) => { const order = c.course ? segmentOrder(c.course) : []; return order[order.indexOf(seg) + 1] }
+// After a finished segment: is the next one ready, being written, missing (nobody writing it), or is the course over
+const ahead = (c: Ctx) => {
+  if (!c.state.done) return undefined
+  const next = nextSegment(c, c.state.done)
+  return !next ? 'end' : c.segments[next] ? 'ready' : c.preparing ? 'writing' : 'missing'
+}
+
 const canLeave = (c: Ctx, step: Step) =>
-  QUESTION_KINDS.has(step.kind) ? !!c.state.result[step.id] : TASK_KINDS.has(step.kind) ? !!c.state.solved[step.id] || !!c.state.result[step.id]?.branch : true
+  QUESTION_KINDS.has(step.kind) ? !!c.state.result[step.id] || c.state.idk[step.id] !== undefined : TASK_KINDS.has(step.kind) ? !!c.state.solved[step.id] || !!c.state.result[step.id]?.branch : true
 const canSkip = (c: Ctx, step: Step) => TASK_KINDS.has(step.kind) && !c.state.solved[step.id] && (c.state.tries[step.id] ?? 0) >= 2
 
 export const setupDone = (c: Ctx) => !!c.course && c.course.setup.length > 0 && c.course.setup.every(r => c.state.setup[r.id]?.status === 'ok')
@@ -401,6 +445,7 @@ const skillTitle = (c: Ctx, id?: string) => c.course?.skills.find(k => k.id === 
 
 export function screen(c: Ctx): Screen {
   const s = c.state
+  if (c.build) return buildScreen(c.build)
   if (!c.course) return { kind: 'empty', title: 'Teach Me', body: 'Say "teach me <subject>" in the chat to start.', actions: [] }
   const course = c.course
   if (c.progress) return progressScreen(c)
@@ -422,7 +467,7 @@ export function screen(c: Ctx): Screen {
     const n = course.intake.length - open.length + 1
     return {
       kind: 'intake', title: course.subject, progress: { label: `${n} of ${course.intake.length}`, done: n - 1, total: course.intake.length },
-      body: q.q, choices: q.options.map((text, i) => ({ n: i + 1, text })), actions: [],
+      body: q.q, choices: q.options.map((text, i) => ({ n: i + 1, text })), input: { placeholder: 'Or say it in your own words' }, actions: [],
     }
   }
   if (s.stage === 'setup') {
@@ -445,14 +490,14 @@ export function screen(c: Ctx): Screen {
         return {
           mark: phaseDone(c, p.skills) ? 'ok' as const : (s.pos ? course.phases.findIndex(x => x.segments.includes(s.pos!.seg)) === i : i === 0) ? 'now' as const : 'todo' as const,
           text: p.title,
-          detail: p.skills.length
+          detail: p.project ? `Project · ${p.segments.length} milestones` : p.skills.length
             ? [`${p.skills.length} skills`, practiced ? `${practiced} practiced` : '', toSharpen ? `${toSharpen} to keep sharp` : ''].filter(Boolean).join(' · ')
             : 'Prepared when you get there',
         }
       }),
-      ...(segmentOrder(course).some(id => c.segments[id])
-        ? { actions: [act('start', s.pos ? 'Continue' : `Start ${course.phases[0]?.title ?? ''}`.trim(), true, 'enter'), PROGRESS] }
-        : { result: { tone: 'wait' as const, text: 'Your first lesson is being written and checked. About a minute.' }, actions: [PROGRESS] }),
+      ...(!segmentOrder(course).some(id => c.segments[id])
+        ? { result: { tone: 'wait' as const, text: 'Your first lesson is being written and checked. About a minute.' }, actions: [PROGRESS] }
+        : { ...nextParts(c), actions: [...nextActions(c, s.pos ? 'Continue' : `Start ${course.phases[0]?.title ?? ''}`.trim()), PROGRESS] }),
     }
   }
   if (s.stage === 'recap') {
@@ -464,8 +509,8 @@ export function screen(c: Ctx): Screen {
         ...learned.map(id => ({ mark: 'ok' as const, text: `Stronger: ${skillTitle(c, id)}` })),
         ...weak.slice(0, 3).map(t => ({ mark: 'todo' as const, text: `Keep sharp: ${t}` })),
       ],
-      body: 'The next part is being prepared. It will be ready next time.',
-      actions: [act('curriculum', 'Curriculum', true, 'enter'), PROGRESS],
+      ...nextParts(c),
+      actions: [...nextActions(c, 'Next lesson'), nextActions(c, '').length ? act('curriculum', 'Curriculum') : act('curriculum', 'Curriculum', true, 'enter'), PROGRESS],
     }
   }
   const at = current(c)
@@ -475,12 +520,13 @@ export function screen(c: Ctx): Screen {
   const res = s.result[rk]
   if (at.warm && s.warm) {
     const n = s.warm.items.length
+    const gate = !!s.warm.gate
     return {
-      kind: 'question', title: step.title, progress: { label: `Warm-up · ${s.warm.i + 1} of ${n}`, done: s.warm.i, total: n },
+      kind: 'question', title: step.title, progress: { label: `${gate ? 'Before you move on' : 'Warm-up'} · ${s.warm.i + 1} of ${n}`, done: s.warm.i, total: n },
       body: step.body, ...(step.code ? { code: { lang: step.code.lang, source: step.code.source } } : {}),
       ...answerParts(step, res, s.draft[rk]),
       ...(res ? { result: { tone: res.tone, text: res.text } } : {}),
-      actions: res ? [act('next', s.warm.i + 1 < n ? 'Next' : 'Back to your lesson', true, 'enter')] : [act('skip', 'Skip the warm-up')],
+      actions: res ? [act('next', s.warm.i + 1 < n ? 'Next' : gate ? 'Continue' : 'Back to your lesson', true, 'enter')] : [act('skip', gate ? 'Skip this check' : 'Skip the warm-up')],
     }
   }
   const total = seg.steps.filter(x => !x.drill).length
@@ -498,10 +544,14 @@ export function screen(c: Ctx): Screen {
   if (step.choices) {
     const draft = s.draft[step.id] ?? []
     const edit = !res && draft.length ? [act('undo', 'Undo', false, 'u'), act('clear', 'Start over')] : []
+    const unsure = s.idk[step.id] !== undefined
+    const result = res ? { tone: res.tone, text: res.text } : unsure ? { tone: 'info' as const, text: teaching(at) } : undefined
     return {
       kind: 'question', ...base, ...answerParts(step, res, draft),
-      ...(res ? { result: { tone: res.tone, text: res.text } } : {}),
-      actions: res ? [act('next', res.branch ? 'Practice this' : 'Next', true, 'enter'), ask] : [...edit, ask],
+      ...(result ? { result } : {}),
+      actions: res
+        ? [act('next', res.branch ? 'Practice this' : 'Next', true, 'enter'), ask]
+        : [...edit, unsure ? act('next', 'Move on for now', false, 's') : act('dontknow', "I don't know", false, 'd'), ask],
     }
   }
   if (step.check) {
@@ -536,6 +586,12 @@ export function screen(c: Ctx): Screen {
   return { kind: 'step', ...base, actions: [act('next', 'Next', true, 'enter'), ask] }
 }
 
+// What "I don't know" shows: the step's own explanation, or the earlier step that teaches its skill
+function teaching(at: At) {
+  const intro = at.seg.steps.slice(0, at.index).reverse().find(x => x.skill === at.step.skill && !x.choices && !x.check)
+  return `That is fine: this one is marked to come back later.\n\n${at.step.more ?? intro?.body ?? 'Ask in the chat for the idea behind it.'}\n\nTry an answer now, or move on.`
+}
+
 function answerParts(step: Step, res: { picked?: number[]; tone?: string } | undefined, draft: number[] = []) {
   if (!isSequence(step)) return { choices: choicesOf(step, res) }
   const picked = res?.picked ?? draft
@@ -567,7 +623,52 @@ function choicesOf(step: Step, res?: { picked?: number[] }) {
   }))
 }
 
+const NEXT_TEXT = {
+  ready: { tone: 'right', text: 'Your next lesson is ready.' },
+  writing: { tone: 'wait', text: 'Your next lesson is being written and checked. About a minute.' },
+  missing: { tone: 'info', text: 'Your next lesson is not written yet.' },
+  end: { tone: 'right', text: 'You finished the course.' },
+} as const
+const nextParts = (c: Ctx) => { const a = ahead(c); return a ? { result: NEXT_TEXT[a] } : {} }
+const nextActions = (c: Ctx, label: string): Action[] => {
+  const a = ahead(c)
+  return !a || a === 'ready' ? [act('start', label, true, 'enter')] : a === 'missing' ? [act('retry', 'Write it now', true, 'enter')] : []
+}
+
 const PROGRESS = act('progress', 'Progress', false, 'g')
+
+function buildScreen(b: Build): Screen {
+  const title = 'Build with me'
+  if (b.stage === 'pick') return {
+    kind: 'intake', title,
+    body: 'Pick a project to build together. In each milestone the setup and tests are added for you, then you write the core.',
+    choices: b.suggestions.map((x, i) => ({ n: i + 1, text: `${x.title}: ${x.pitch}` })),
+    input: { placeholder: b.suggestions.length ? 'Or describe your own project' : 'Describe the project you want to build' },
+    ...(b.note ? { result: { tone: 'info' as const, text: b.note } } : {}),
+    actions: [act('back', 'Not now', false, 'b')],
+  }
+  if (b.stage === 'planning') return {
+    kind: 'intake', title, body: `**${b.title}**`,
+    result: { tone: 'wait', text: 'Planning the milestones and setting up the first one. About a minute.' },
+    actions: [act('back', 'Keep learning meanwhile', true, 'b')],
+  }
+  return { kind: 'intake', title, body: `**${b.title}** is planned.`, result: { tone: 'right', text: b.note ?? 'It starts when this lesson ends.' }, actions: [act('back', 'Back to the lesson', true, 'enter')] }
+}
+
+// The project phase goes right after the learner's current segment (first, before any lesson): the rest of that phase moves after it
+export function withProject(course: Course, s: LearnerState, phase: Phase): Phase[] {
+  const at = s.done ?? s.pos?.seg
+  const i = at ? course.phases.findIndex(p => p.segments.includes(at)) : -1
+  const p = course.phases[i]
+  if (!at || !p) return [phase, ...course.phases]
+  const k = p.segments.indexOf(at)
+  const rest = p.segments.slice(k + 1)
+  return [
+    ...course.phases.slice(0, i), { ...p, segments: p.segments.slice(0, k + 1) }, phase,
+    ...(rest.length ? [{ id: `${p.id}-after-${phase.id}`, title: `${p.title} (continued)`, skills: [], segments: rest }] : []),
+    ...course.phases.slice(i + 1),
+  ]
+}
 const SKILL_MARK = { 'not-started': 'todo', learning: 'now', practiced: 'now', demonstrated: 'ok', mastered: 'ok' } as const
 
 function progressScreen(c: Ctx): Screen {
@@ -589,7 +690,7 @@ function progressScreen(c: Ctx): Screen {
     groups: [
       { title: 'Strengths', lines: st.strengths.length ? st.strengths.map(k => ({ mark: 'ok' as const, text: k.title, detail: `${right(k)} · ${k.state}` })) : [{ mark: 'todo' as const, text: 'Shown after a few right answers on one skill' }] },
       { title: 'To work on', lines: st.weaknesses.length ? st.weaknesses.map(w => ({ mark: 'fail' as const, text: w.text, detail: w.detail })) : [{ mark: 'ok' as const, text: 'Nothing open' }] },
-      { title: 'Skills', lines: st.skills.map(k => ({ mark: SKILL_MARK[k.state], text: k.title, detail: k.answers ? `${right(k)} · ${k.state}` : k.state })) },
+      { title: 'Skills', lines: st.skills.map(k => ({ mark: SKILL_MARK[k.state], text: k.title, detail: [k.answers ? right(k) : '', k.state, k.idk ? `${k.idk}× "I don't know"` : ''].filter(Boolean).join(' · ') })) },
     ],
   }
 }
@@ -605,6 +706,54 @@ function overall(c: Ctx) {
 const phaseDone = (c: Ctx, skills: string[]) =>
   skills.length > 0 && skills.every(id => ['demonstrated', 'mastered'].includes(skillState(c.state, id, c.now)))
 
+// What the learner sees on this step, without the key, so the tutor can talk about it
+function stepText(c: Ctx, at: At) {
+  const { step } = at
+  const res = c.state.result[resultKey(c, at)]
+  return [
+    `What they see: ${step.body}`,
+    step.code ? `Code (${step.code.lang}):\n${step.code.source}` : '',
+    step.choices ? `Choices: ${step.choices.map((ch, i) => `${i + 1}) ${ch.code ?? ch.text}`).join(' · ')}` : '',
+    res?.picked ? `They answered ${res.picked.map(i => i + 1).join(', ')}: ${res.tone}.` : '',
+    c.state.idk[step.id] !== undefined && !res ? 'They said they do not know this one yet.' : '',
+  ].filter(Boolean).join('\n')
+}
+
+const projectText = (c: Ctx, at: At) => {
+  const p = c.course?.phases.find(x => x.project && x.segments.includes(at.seg.id))
+  return p ? `Building "${p.title}" together (${p.brief ?? ''}), milestone ${p.segments.indexOf(at.seg.id) + 1} of ${p.segments.length}, in ${p.project}. The system adds the boilerplate and tests; the learner writes the core. Never write their part for them.` : ''
+}
+
+const intakeText = (c: Ctx) => {
+  const said = c.course!.intake.filter(q => c.state.intake[q.id] !== undefined).map(q => {
+    const a = c.state.intake[q.id]!
+    return `${q.q} ${typeof a === 'number' ? q.options[a] : `"${a}"`}`
+  })
+  return said.length ? `They said: ${said.join(' · ')}` : ''
+}
+
+export type Band = 'new' | 'beginner' | 'developing' | 'confident'
+
+// The learner's level from their own answers: what they can use, what they are learning, what they have not started
+export function level(c: Ctx) {
+  const course = c.course!
+  const st = stats(course, c.state, c.now)
+  const by = (...states: string[]) => course.skills.filter(k => states.includes(skillState(c.state, k.id, c.now))).map(k => k.id)
+  const canUse = by('practiced', 'demonstrated', 'mastered')
+  const band: Band = !st.answers ? 'new' : st.accuracy >= 0.8 && canUse.length >= 2 ? 'confident' : st.accuracy >= 0.6 && canUse.length >= 1 ? 'developing' : 'beginner'
+  return { band, canUse, learning: by('learning'), notStarted: by('not-started'), answers: st.answers, accuracy: st.accuracy, firstTry: st.firstTry }
+}
+
+const levelText = (c: Ctx) => {
+  const l = level(c)
+  const weak = keepSharp(c).map(w => w.tag ?? w.skill).filter(Boolean)
+  return [
+    `Level: ${l.band}${l.answers ? ` (${pct(l.accuracy)} right over ${l.answers} answers, ${pct(l.firstTry)} right at the first try)` : ' (no answers yet)'}.`,
+    `Can use: ${l.canUse.join(', ') || 'nothing yet'}. Still learning: ${l.learning.join(', ') || 'none'}. Not started: ${l.notStarted.join(', ') || 'none'}.`,
+    weak.length ? `Open weaknesses: ${weak.join(', ')}.` : '',
+  ].filter(Boolean).join('\n')
+}
+
 export function snapshot(c: Ctx): string {
   const s = c.state
   if (!c.course) return 'No Teach Me course in this folder.'
@@ -613,7 +762,10 @@ export function snapshot(c: Ctx): string {
   return [
     `Course: ${c.course.subject} (goal: ${c.course.goal}). Stage: ${s.stage}.`,
     at ? `At: ${at.seg.title} · "${at.step.title}" (${at.step.kind}${at.warm ? ', warm-up' : ''}). Name steps by their title, never an id.` : '',
-    `Skills: ${c.course.skills.map(k => `${k.id}=${skillState(s, k.id, c.now)}`).join(', ')}.`,
+    at ? stepText(c, at) : '',
+    at ? projectText(c, at) : '',
+    intakeText(c),
+    levelText(c),
     weak.length ? `Keep sharp: ${weak.join(', ')}.` : '',
     s.notes.length ? `Notes from earlier sessions: ${s.notes.slice(-5).join(' · ')}` : '',
     s.aside ? 'The learner stepped aside to ask a question; their place in the lesson is kept.' : '',

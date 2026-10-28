@@ -1,9 +1,10 @@
-import type { Course, Segment } from './types'
+import type { Course, Phase, Segment } from './types'
 
 const KINDS = ['concept', 'compare', 'worked', 'predict', 'mcq', 'reorder', 'spot-bug', 'trace', 'stepper', 'terminal', 'code', 'review', 'stage']
 const CLASSES = ['slip', 'misconception', 'prereq', 'environment', 'misread']
 const SKILL_TYPES = ['code', 'tool', 'data', 'config', 'ops', 'concept', 'design']
 const RUNNABLE = ['python', 'sql', 'javascript', 'js']
+const TEACHING = ['concept', 'compare', 'worked', 'stepper']
 const MAX_BODY_WORDS = 80
 const MAX_CODE_LINES = 12
 
@@ -41,6 +42,56 @@ export function validateCourse(c: any): string[] {
   return err
 }
 
+// How a segment teaches, checked only when an author submits one, so lessons written before these rules still load:
+// teach a skill before testing it, test it before the next idea starts, and from the second segment on, use earlier skills in a task.
+export function untaught(g: Segment, before: readonly Segment[] = []): string[] {
+  const err: string[] = []
+  const earlier = before.filter(b => b.id !== g.id)
+  const taught = new Set(earlier.flatMap(b => b.steps.filter(x => TEACHING.includes(x.kind) && x.skill).map(x => x.skill!)))
+  let open: string | undefined
+  g.steps.forEach((s, i) => {
+    if (!s.skill || s.drill) return
+    const at = `steps[${i}] (${s.id})`
+    if (TEACHING.includes(s.kind)) {
+      if (open && open !== s.skill) err.push(`${at}: test skill ${open} with a question or task before teaching ${s.skill}`)
+      open = s.skill
+      taught.add(s.skill)
+    } else if (s.choices || s.check) {
+      if (!taught.has(s.skill)) err.push(`${at}: skill ${s.skill} is tested before a concept, compare, worked or stepper step with that skill explains it (why, feedback and more do not count)`)
+      taught.add(s.skill)
+      if (open === s.skill) open = undefined
+    }
+  })
+  if (open) err.push(`skill ${open} is taught last but never tested after it`)
+  const old = new Set(earlier.filter(b => !b.steps.every(x => x.drill)).flatMap(b => b.skills))
+  const graded = g.steps.filter(s => !s.drill && (s.choices || s.check))
+  if (old.size && graded.length && !graded.some(s => s.uses?.some(u => old.has(u)))) err.push(`no question or task uses an earlier skill: name the earlier skills it combines in "uses" (one of ${[...old].join(', ')})`)
+  return err
+}
+
+// A build-with-me phase as the author submits it
+export function validateProjectPhase(p: any, course: Course, newSkills: readonly any[] = []): string[] {
+  const err: string[] = []
+  const known = new Set([...course.skills, ...newSkills].map(k => k?.id))
+  const used = new Set(course.phases.flatMap(x => [x.id, ...x.segments]))
+  if (!isStr(p?.id) || !isStr(p?.title) || !isStr(p?.brief)) err.push('phase: id, title and brief (one sentence: what the learner builds)')
+  if (used.has(p?.id)) err.push(`phase id ${p?.id} is taken`)
+  if (!isArr(p?.skills) || !p.skills.every((k: unknown) => known.has(k))) err.push('phase.skills lists known skill ids (add new ones with newSkills)')
+  if (!isArr(p?.segments) || p.segments.length < 2 || p.segments.length > 8 || new Set(p.segments).size !== p.segments.length || p.segments.some((x: unknown) => !isStr(x) || used.has(x))) err.push('phase.segments: 2 to 8 new, unique milestone ids')
+  if (!isStr(p?.project) || !/^practice\/[\w.-]+$/.test(p.project)) err.push('phase.project is the project folder, "practice/<name>"')
+  return err
+}
+
+// A milestone works in the project folder and leaves the learner's files to the learner
+export function milestoneErrors(g: Segment, phase: Phase, before: readonly Segment[]): string[] {
+  const err: string[] = []
+  if (g.practice?.dir !== phase.project) err.push(`practice.dir must be the project folder ${phase.project}`)
+  const mine = new Set([...before.filter(b => phase.segments.includes(b.id) && b.id !== g.id), g].flatMap(b => b.steps.map(x => x.open).filter((x): x is string => !!x)))
+  for (const c of g.practice?.adds ?? []) if (c[0] === '@write' && mine.has(c[1]!)) err.push(`practice.adds writes ${c[1]}, a file the learner writes`)
+  if (!g.steps.some(x => !x.drill && x.kind === 'code' && x.open && x.check)) err.push('a milestone needs a code task with "open" and a check: the part the learner writes')
+  return err
+}
+
 export function validateSegment(g: any, course?: Course): string[] {
   const err: string[] = []
   if (g?.format !== 'teachme.script/1') return ['format must be "teachme.script/1"']
@@ -52,6 +103,7 @@ export function validateSegment(g: any, course?: Course): string[] {
   if (stepIds.size !== g.steps.length) err.push('step ids must be unique')
   if (g.practice && (!isStr(g.practice.adapter) || !isStr(g.practice.dir) || !isArr(g.practice.scaffold))) err.push('practice: adapter, dir, scaffold')
   if (g.practice && outside(g.practice.dir)) err.push('practice.dir must be a relative path inside the course folder')
+  if (g.practice?.adds !== undefined && (!isArr(g.practice.adds) || !g.practice.adds.every((c: unknown) => isArr(c) && c.length > 0))) err.push('practice.adds is a list of commands, like scaffold')
   for (const id of isArr(g.skills) ? g.skills : []) {
     if (!g.steps.some((s: any) => s?.skill === id && !s.drill && (s.choices || s.check))) err.push(`skill ${id} has no graded step in this segment`)
   }
@@ -68,6 +120,7 @@ export function validateSegment(g: any, course?: Course): string[] {
     if (s?.kind === 'stepper' && (!isArr(s.frames) || s.frames.length < 2 || !s.frames.every((x: any) => isStr(x?.note)))) err.push(`${at}: a stepper needs two or more frames, each with a note`)
     if (s?.compare && (!isStr(s.compare.with) || !isStr(s.compare.text) || !isStr(s.compare.stops))) err.push(`${at}: compare needs with, text and stops (where the comparison stops)`)
     if (known && s?.skill && !known.has(s.skill)) err.push(`${at}: unknown skill ${s.skill}`)
+    if (s?.uses !== undefined && (!isArr(s.uses) || !s.uses.every((u: unknown) => isStr(u) && (!known || known.has(u))))) err.push(`${at}: uses lists known skill ids`)
     if (s?.remedy && (!s.drill || (tags && !tags.has(s.remedy)))) err.push(`${at}: remedy must be a known misconception tag, on a drill step`)
     if (s?.choices) {
       if (!isArr(s.choices) || s.choices.length < 2 || s.choices.length > 8) err.push(`${at}: 2–8 choices`)

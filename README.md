@@ -18,7 +18,7 @@ back from a new angle until it is fixed for good.
 
    ```sh
    cd extension && npm install && npm run package
-   code --install-extension teachme-anything-0.6.0.vsix
+   code --install-extension teachme-anything-0.6.1.vsix
    ```
 
 3. In an empty folder, tell Claude Code: **"teach me &lt;subject&gt;"**.
@@ -31,6 +31,9 @@ back from a new angle until it is fixed for good.
   questions (about a minute), and every example and exercise is run on your machine before you see it.
 - **Real practice.** Code is checked by tests, tools by the state they leave, queries by their results, theory by
   predicting, tracing and stepping through. One click installs what is missing.
+- **Build with me.** Run `/teachme-anything:build-with-me`, then pick one of three projects that fit your level, or
+  type your own. It becomes the next phase of your course. In each milestone the setup and tests are added for you,
+  then you write the core.
 - **Mistakes, fixed for good.** A wrong answer you made before gets a drill from a new angle. A fixed weakness is
   re-checked a day later, and every session starts with a short warm-up on what is due.
 - **Your progress.** Accuracy, right at the first try, time per answer, a learning curve, your strengths and what

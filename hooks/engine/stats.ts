@@ -34,7 +34,8 @@ export function stats(course: Course, s: LearnerState, now: number) {
 
   const skills = course.skills.map(k => {
     const mine = ev.filter(e => e.skill === k.id)
-    return { id: k.id, title: k.title, state: skillState(s, k.id, now), answers: mine.length, accuracy: ratio(mine.filter(e => e.ok).length, mine.length) }
+    const idk = Object.values(s.idk).filter(x => x === k.id).length
+    return { id: k.id, title: k.title, state: skillState(s, k.id, now), answers: mine.length, accuracy: ratio(mine.filter(e => e.ok).length, mine.length), idk }
   })
   const strengths = skills
     .filter(k => k.answers >= 2 && (k.state === 'demonstrated' || k.state === 'mastered' || k.accuracy >= 0.8))

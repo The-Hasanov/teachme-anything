@@ -12,10 +12,12 @@ const TOOLS: Record<string, string[]> = {
   podman: ['podman', '--version'],
   node: ['node', '--version'],
   python: ['python', '--version'],
+  cargo: ['cargo', '--version'],
 }
 export const isTool = (adapter: string) => adapter in TOOLS
 
 let python = 'python'
+const BUILD_MS = 120_000
 
 async function run($: EngineInterface, argv: readonly string[], cwd?: string, timeoutMs = 15_000) {
   if (argv[0] === 'python') argv = [python, ...argv.slice(1)]
@@ -75,6 +77,7 @@ export const MANUAL: Record<string, string> = {
   podman: 'https://podman.io/docs/installation',
   python: 'https://www.python.org/downloads/',
   node: 'https://nodejs.org/en/download',
+  cargo: 'https://rustup.rs',
 }
 
 export async function mkdirp($: EngineInterface, dir: string, os: Os) {
@@ -93,7 +96,7 @@ export async function runCommand($: EngineInterface, dir: string, cmd: readonly 
     await $.fs.write(`${dir}/${file}`, cmd[2] ?? '')
     return { ok: true, out: '' }
   }
-  const r = await run($, cmd, dir)
+  const r = await run($, cmd, dir, BUILD_MS)
   return { ok: r.exitCode === 0, out: `${r.stdout}\n${r.stderr}`.trim().slice(0, 400) }
 }
 
@@ -108,7 +111,7 @@ export async function scaffold($: EngineInterface, dir: string, cmds: readonly (
 
 export async function runProbes($: EngineInterface, dir: string, probes: readonly Probe[]): Promise<ProbeResult[]> {
   return Promise.all(probes.map(async p => {
-    const r = await run($, p.argv, dir)
+    const r = await run($, p.argv, dir, BUILD_MS)
     const out = r.stdout.replace(/\r\n/g, '\n').trim()
     const got = out || r.stderr.trim().slice(-400) || (r.exitCode === 0 ? '' : `exit ${r.exitCode}`)
     const e = p.expect
