@@ -29,7 +29,19 @@
   };
   const md = (s) => esc(s).split(/\n{2,}/).map(block).join('');
   const COMMENT = { python: '#', py: '#', sh: '#', bash: '#', shell: '#', powershell: '#', ps1: '#', ruby: '#', yaml: '#', toml: '#', r: '#', sql: '--', js: '//', javascript: '//', ts: '//', typescript: '//', java: '//', c: '//', cpp: '//', cs: '//', go: '//', rust: '//', kotlin: '//', swift: '//', php: '//' };
+  const KW = {
+    python: 'and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield',
+    js: 'async await break case catch class const continue default delete do else export extends finally for from function if import in instanceof let new of return static super switch this throw try typeof var void while yield',
+    rust: 'as async await break const continue crate dyn else enum extern fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait type unsafe use where while',
+    go: 'break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var',
+    sql: 'select from where and or not in is as join left right inner outer on group by order having limit offset insert into values update set delete create table drop alter index primary key distinct union all case when then else end',
+    sh: 'if then else elif fi for while do done case esac in function return local export',
+  };
+  for (const k in KW) KW[k] = new Set(KW[k].split(' '));
+  for (const [a, b] of [['py', 'python'], ['javascript', 'js'], ['ts', 'js'], ['typescript', 'js'], ['rs', 'rust'], ['bash', 'sh'], ['shell', 'sh']]) KW[a] = KW[b];
+  const CONST = /^(True|False|None|true|false|null|undefined|nil|NULL|TRUE|FALSE)$/;
   const hl = (src, lang) => String(src ?? '').split('\n').map(line => {
+    const kw = KW[lang] ?? new Set(), ci = lang === 'sql';
     const marks = lang in COMMENT ? [COMMENT[lang]] : lang ? [] : ['#', '//'];
     let out = '', i = 0;
     while (i < line.length) {
@@ -45,11 +57,20 @@
       }
       const num = /^\d+(\.\d+)?/.exec(line.slice(i));
       if (num && (i === 0 || !/[\w.]/.test(line[i - 1]))) { out += `<span class="t-n">${num[0]}</span>`; i += num[0].length; continue; }
+      const word = /^[A-Za-z_]\w*/.exec(line.slice(i));
+      if (word && (i === 0 || !/\w/.test(line[i - 1]))) {
+        const w = word[0];
+        const cls = CONST.test(w) ? 't-n' : kw.has(ci ? w.toLowerCase() : w) ? 't-k' : /^\s*\(/.test(line.slice(i + w.length)) ? 't-f' : '';
+        out += cls ? `<span class="${cls}">${w}</span>` : w;
+        i += w.length;
+        continue;
+      }
       out += esc(ch);
       i++;
     }
     return out;
   }).join('\n');
+  const numbered = (html) => html.split('\n').map(l => `<span class="ln">${l}</span>`).join('\n');
   const OUT_ERR = /^(Traceback|\s+File "|\w*(Error|Exception)\b|error[:[]|fatal:|ERROR\b|FAIL\b)/;
   const OUT_WARN = /^(warning[:[]|Warning\b|WARN\b|hint:)/i;
   const output = (s) => String(s).split('\n').map(l => OUT_ERR.test(l) ? `<span class="t-err">${esc(l)}</span>` : OUT_WARN.test(l) ? `<span class="t-warn">${esc(l)}</span>` : esc(l)).join('\n');
@@ -88,8 +109,8 @@
     if (s.body) out.push(md(s.body));
     if (s.compare) out.push(`<div class="compare">${md(s.compare.text)}<p class="stops"><strong>Where it stops:</strong> ${esc(s.compare.stops)}</p></div>`);
     const lang = s.code?.lang?.toLowerCase();
-    if (s.code) out.push(`<pre class="code"><code>${hl(s.code.source, lang)}</code></pre>`);
-    if (s.frame) out.push(`<div class="frame" aria-live="polite"><span class="label">Frame ${s.frame.i + 1} of ${s.frame.n}</span>${s.frame.state ? `<pre><code>${esc(s.frame.state)}</code></pre>` : ''}${s.frame.code ? `<pre class="code"><code>${hl(s.frame.code, lang)}</code></pre>` : ''}<p>${esc(s.frame.note)}</p></div>`);
+    if (s.code) out.push(`<pre class="code"><code>${numbered(hl(s.code.source, lang))}</code></pre>`);
+    if (s.frame) out.push(`<div class="frame" aria-live="polite"><span class="label">Frame ${s.frame.i + 1} of ${s.frame.n}</span>${s.frame.state ? `<pre><code>${esc(s.frame.state)}</code></pre>` : ''}${s.frame.code ? `<pre class="code"><code>${numbered(hl(s.frame.code, lang))}</code></pre>` : ''}<p>${esc(s.frame.note)}</p></div>`);
     if (s.output !== undefined) out.push(`<div class="output"><span class="label">${icon('terminal')} Output</span><pre><code>${output(s.output)}</code></pre></div>`);
     if (s.table) out.push(`<table class="data trace"><thead><tr>${s.table.columns.map(c => `<th>${esc(c)}</th>`).join('')}<th><span class="sr-only">result</span></th></tr></thead><tbody>${s.table.rows.map(r => `<tr>${r.cells.map((c, k) => `<td class="${r.at === k ? 'now' : c === '?' ? 'blank' : ''}">${r.at === k ? '<span class="sr-only">now: </span>' : ''}${esc(c)}</td>`).join('')}<td class="${r.mark ?? ''}">${markIcon(r.mark)}</td></tr>`).join('')}</tbody></table>`);
     if (s.built) out.push(`<ol class="built" aria-label="Your order">${s.built.length ? s.built.map(b => `<li class="${b.mark ?? ''}"><code>${hl(b.text, lang)}</code>${markIcon(b.mark)}</li>`).join('') : '<li class="empty">Press the lines in order.</li>'}</ol>`);
@@ -117,7 +138,7 @@
     if (!connected) out.push(`<p class="offline">${icon('debug-disconnect')} Claude Code is not connected. Open it in this folder to continue.</p>`);
     if (showKeys) out.push(`<p class="keys">1–8 choose · Enter primary · H hint · M more · A ask · B back to step · ? keys</p>`);
     const y = window.scrollY;
-    root.innerHTML = `<main class="${isNew ? 'enter' : ''}">${out.join('')}</main>`;
+    root.innerHTML = `<main class="k-${esc(s.kind)}${isNew ? ' enter' : ''}">${out.join('')}</main>`;
     if (!isNew) window.scrollTo(0, y);
     root.querySelectorAll('[data-action]').forEach(b => b.onclick = () => send({ action: b.dataset.action }));
     root.querySelectorAll('[data-choose]').forEach(b => b.onclick = () => send({ choose: Number(b.dataset.choose) }));

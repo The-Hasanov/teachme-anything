@@ -29,6 +29,16 @@ assert.match(h, /<span class="t-s">'x--y'<\/span>/);
 h = draw({ kind: 'step', title: 'T', actions: [], code: { lang: 'git', source: 'git checkout -- file  # note' } });
 assert.ok(!/t-c/.test(h), 'an unknown language gets no comment guess');
 
+h = draw({ kind: 'question', title: 'T', actions: [], code: { lang: 'python', source: 'def top(nums):\n    return sorted(nums) if nums else None\n# if def' } });
+assert.match(h, /<main class="k-question/);
+assert.equal((h.match(/<span class="ln">/g) ?? []).length, 3, 'one numbered line per source line');
+assert.match(h, /<span class="t-k">def<\/span> <span class="t-f">top<\/span>\(nums\)/);
+assert.match(h, /<span class="t-k">return<\/span> <span class="t-f">sorted<\/span>\(nums\) <span class="t-k">if<\/span>/);
+assert.match(h, /<span class="t-n">None<\/span>/);
+assert.match(h, /<span class="t-c"># if def<\/span>/, 'keywords in a comment stay comment');
+h = draw({ kind: 'step', title: 'T', actions: [], code: { lang: 'sql', source: 'select count(*) from t' } });
+assert.match(h, /<span class="t-k">select<\/span> <span class="t-f">count<\/span>/);
+
 h = draw({ kind: 'step', title: 'T', actions: [], body: '### Why\n\n- one `a*b`\n- *two*\n\n1. first\n2. second\n\n> quoted\n\nSee [docs](https://example.com) and [bad](javascript:alert(1)).\n\n2 * 3 * 4' });
 assert.match(h, /<h3>Why<\/h3>/);
 assert.match(h, /<ul class="doc"><li>one <code>a&#42;b<\/code><\/li><li><em>two<\/em><\/li><\/ul>/);
