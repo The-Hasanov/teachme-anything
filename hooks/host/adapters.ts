@@ -18,11 +18,14 @@ export const isTool = (adapter: string) => adapter in TOOLS
 
 let python = 'python'
 const BUILD_MS = 120_000
+// A tool the learner installs lands on their login shell's PATH (~/.zprofile, ~/.cargo/env), which Claude Code may
+// not have inherited. Once a tool is missing, every command runs on that PATH plus the usual install folders.
+let shellPath: Record<string, string> | undefined
 
 async function run($: EngineInterface, argv: readonly string[], cwd?: string, timeoutMs = 15_000) {
   if (argv[0] === 'python') argv = [python, ...argv.slice(1)]
   try {
-    return await $.process.run(argv, { ...(cwd ? { cwd } : {}), timeoutMs })
+    return await $.process.run(argv, { ...(cwd ? { cwd } : {}), ...(shellPath ? { env: shellPath } : {}), timeoutMs })
   } catch (err) {
     return { exitCode: -1, stdout: '', stderr: String(err) }
   }
@@ -44,7 +47,7 @@ export async function probeEnv($: EngineInterface): Promise<Env> {
   const [os, termProgram, vscodePid, shellEnv, comspec] = await Promise.all([
     osOf($), $.env.get('TERM_PROGRAM'), $.env.get('VSCODE_PID'), $.env.get('SHELL'), $.env.get('ComSpec'),
   ])
-  const versions = await Promise.all(Object.entries(TOOLS).map(async ([name, argv]) => {
+  const probe = () => Promise.all(Object.entries(TOOLS).map(async ([name, argv]) => {
     let r = await run($, argv, undefined, 8000)
     if (name === 'python' && r.exitCode !== 0) {
       r = await run($, ['python3', '--version'], undefined, 8000)
@@ -52,6 +55,14 @@ export async function probeEnv($: EngineInterface): Promise<Env> {
     }
     return [name, r.exitCode === 0 ? (r.stdout || r.stderr).trim().split('\n')[0]!.slice(0, 80) : null] as const
   }))
+  let versions = await probe()
+  if (os !== 'windows' && versions.some(([, v]) => !v)) {
+    const home = await $.env.get('HOME')
+    const login = await run($, [shellEnv || '/bin/sh', '-lc', 'printf %s "$PATH"'], undefined, 8000)
+    const dirs = [login.exitCode === 0 ? login.stdout.trim() : '', (await $.env.get('PATH')) ?? '', home ? `${home}/.cargo/bin:${home}/.local/bin` : '', '/opt/homebrew/bin:/usr/local/bin']
+    shellPath = { PATH: [...new Set(dirs.join(':').split(':').filter(Boolean))].join(':') }
+    versions = await probe()
+  }
   return {
     os,
     shell: shellEnv ? shellEnv.split(/[\\/]/).pop()! : os === 'windows' ? (comspec ? 'PowerShell or cmd' : 'cmd') : 'sh',

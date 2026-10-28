@@ -15,14 +15,18 @@ const PANE = {
   props: { title: 'Teach Me', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
 } as const
 
-type Run = (argv: readonly string[], cwd: string) => { exitCode: number; stdout: string; stderr?: string } | undefined
+type Run = (argv: readonly string[], cwd: string, path?: string) => { exitCode: number; stdout: string; stderr?: string } | undefined
+const LINUX_ENV: Record<string, string> = { HOME: '/home/learner', SHELL: '/bin/zsh', PATH: '/usr/bin:/bin' }
+
+type Reply = { status: number; text?: string } | undefined
 
 function world(on: Parameters<Parameters<typeof test>[1]>[1], run?: Run, os: 'windows' | 'linux' = 'windows') {
   const files: Record<string, string> = {}
   const calls = { model: 0, runs: [] as string[] }
-  mock.clock(on, { now: Date.parse('2026-10-27T10:00:00Z') })
+  const net: { fetch?: (url: string, init?: { method?: string; headers?: Record<string, string> }) => Reply | Promise<Reply> } = {}
+  const clock = mock.clock(on, { now: Date.parse('2026-10-27T10:00:00Z') })
   mock.store(on, {})
-  on('env.get', (_, e) => ({ value: os === 'linux' ? undefined : e.name === 'OS' ? 'Windows_NT' : e.name === 'USERPROFILE' ? 'C:/Users/learner' : undefined }))
+  on('env.get', (_, e) => ({ value: os === 'linux' ? LINUX_ENV[e.name] : e.name === 'OS' ? 'Windows_NT' : e.name === 'USERPROFILE' ? 'C:/Users/learner' : undefined }))
   on('session.cwd', () => ({ value: ROOT }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'tutor' } }))
@@ -30,7 +34,11 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], run?: Run, os: 'wi
   on('agent.register', () => ({ value: { agent: 'teachme-anything:author' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.log', () => ({ value: undefined }))
-  on('http.fetch', () => { throw new Error('ECONNREFUSED') })
+  on('http.fetch', async (_, e) => {
+    const r = await net.fetch?.(e.url, e.init)
+    if (!r) throw new Error('ECONNREFUSED')
+    return { value: { ok: r.status < 300, headers: {}, text: '', requestId: '', key: '', ...r } }
+  })
   on('model.complete', () => { calls.model++; return { value: { isAnswered: true, text: '{"class":"misread","feedback":"x"}' } } })
   on('fs.exists', (_, e) => ({ value: Object.keys(files).some(f => f === norm(e.path) || f.startsWith(norm(e.path) + '/')) }))
   on('fs.read', (_, e) => {
@@ -46,11 +54,11 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], run?: Run, os: 'wi
   })
   on('process.run', (_, e) => {
     calls.runs.push(e.argv.join(' '))
-    const r = run?.(e.argv, norm(e.init?.cwd ?? ROOT))
+    const r = run?.(e.argv, norm(e.init?.cwd ?? ROOT), e.init?.env?.PATH)
     if (r) return { value: { stderr: '', ...r, isStdoutTruncated: false, isStderrTruncated: false } }
     return { value: { exitCode: 0, stdout: e.argv[0] === 'git' && e.argv[1] === '--version' ? 'git version 2.55.0' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { files, calls }
+  return { files, calls, net, clock }
 }
 
 test('teach me Git in an empty folder: course installed, pane drawn everywhere, presses never call a model', async ($, on) => {
@@ -136,6 +144,7 @@ test('a subject with no course: the intake runs while the author writes the cour
   expect((await submitSeg(seg)).errors.join(' ')).toMatch(/skill pods is tested before .* explains it/)
   const intro = { id: 'k0', kind: 'concept', skill: 'pods', difficulty: 1, title: 'Pods', body: 'A pod runs one or more containers together.' }
   expect(await submitSeg({ ...seg, steps: [intro, ...seg.steps] })).toMatchObject({ ok: true })
+  expect(Object.entries(files).find(([f]) => f.endsWith('/.teachme/metrics.jsonl'))?.[1]).toMatch(/"kind":"segment-rejected","seg":"basics-1","errors":\["[^"]*skill pods is tested before/)
   expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Start Pods', 'Progress'])
   await ui.unmount()
 })
@@ -356,5 +365,55 @@ test('a failed setup item offers Fix it for me: the doctor agent fixes the machi
   expect((await $.tool.call({ tool: 'mcp__teachme-anything__recheck_setup' } as never)).result).toMatch(/^✓ Python 3: Python 3\.13\.0\n✓ Practice folder/)
   expect(await texts()).toMatch(/✓ Python 3[\s\S]*✓ Examples and exercises checked on your machine/)
   expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Continue'])
+  await ui.unmount()
+})
+
+test('#12 a tool only on the login shell PATH is found, and every later command runs on that PATH', async ($, on) => {
+  const pythonRuns: (string | undefined)[] = []
+  const w: { files: Record<string, string> } = world(on, (argv, cwd, path) => {
+    if (argv[0] === '/bin/zsh' && argv[1] === '-lc') return { exitCode: 0, stdout: '/home/learner/.pyenv/shims:/usr/bin' }
+    if (/^python3?$/.test(argv[0]!)) {
+      pythonRuns.push(path)
+      if (!path?.includes('/home/learner/.pyenv/shims')) return { exitCode: 127, stdout: '', stderr: 'command not found' }
+    }
+    return machine(w.files)(argv, cwd)
+  }, 'linux')
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Python' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  for (const key of ['choose-1', 'choose-1', 'choose-1', 'act-setup']) await ui.press({ key })
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text).join(' | ')).toMatch(/✓ Python 3[\s\S]*✓ Examples and exercises checked on your machine/)
+  const after = pythonRuns.slice(pythonRuns.findIndex(p => p?.includes('.pyenv')))
+  expect(after.length).toBeGreaterThan(3)
+  expect(after.every(p => p === '/home/learner/.pyenv/shims:/usr/bin:/bin:/home/learner/.cargo/bin:/home/learner/.local/bin:/opt/homebrew/bin:/usr/local/bin')).toBe(true)
+  await ui.unmount()
+})
+
+test('#10 a VS Code window driven by a newer session: this one stops drawing there and says so in its band', async ($, on) => {
+  const { files, net, clock } = world(on)
+  let status = 200
+  let release = () => {}
+  const views: string[] = []
+  files['C:/Users/learner/.teachme/vscode/7.json'] = JSON.stringify({ port: 7, token: 't', folders: [ROOT], pid: 7 })
+  net.fetch = (url, init) => {
+    if (url.includes('/lesson/view')) { views.push(url); return { status } }
+    const reply = () => ({ status, text: JSON.stringify({ boot: 'b1', last: 0, events: [] }) })
+    // A long poll waits until the test lets it answer, as the window would
+    return url.includes('wait=0') ? reply() : new Promise<Reply>(r => { release = () => r(reply()) })
+  }
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Git' } as never)
+  await clock.advance(2000)
+  expect(views.length).toBeGreaterThan(0)
+  status = 409
+  release()
+  await clock.advance(2000)
+  const drawn = views.length
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'choose-1' })
+  expect(views.length).toBe(drawn)
+  const band = await $.ui.mount({ plugin: 'teachme-anything', component: 'AbovePrompt', requestId: 'band', props: { hasSurvey: false }, surface: 'terminal' } as never)
+  expect((await band.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toMatch(/VS Code shows a newer Claude Code session/)
+  await band.unmount()
   await ui.unmount()
 })

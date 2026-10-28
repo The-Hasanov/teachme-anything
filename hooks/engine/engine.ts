@@ -12,6 +12,8 @@ export type Ctx = {
   busy?: string
   progress?: boolean
   preparing?: boolean
+  prepSince?: number
+  prepError?: string
   build?: Build
 }
 
@@ -631,7 +633,15 @@ const NEXT_TEXT = {
   missing: { tone: 'info', text: 'Your next lesson is not written yet.' },
   end: { tone: 'right', text: 'You finished the course.' },
 } as const
-const nextParts = (c: Ctx) => { const a = ahead(c); return a ? { result: NEXT_TEXT[a] } : {} }
+const nextParts = (c: Ctx) => {
+  const a = ahead(c)
+  if (a === 'writing' && c.prepSince !== undefined) {
+    const sec = Math.max(0, Math.round((c.now - c.prepSince) / 1000))
+    return { result: { tone: 'wait' as const, text: `${NEXT_TEXT.writing.text} ${sec}s so far.${sec > 180 ? ' Taking longer than usual: it is still trying.' : ''}` } }
+  }
+  if (a === 'missing' && c.prepError) return { result: { tone: 'wrong' as const, text: `Your next lesson could not be written: ${c.prepError}` } }
+  return a ? { result: NEXT_TEXT[a] } : {}
+}
 const nextActions = (c: Ctx, label: string): Action[] => {
   const a = ahead(c)
   return !a || a === 'ready' ? [act('start', label, true, 'enter')] : a === 'missing' ? [act('retry', 'Write it now', true, 'enter')] : []

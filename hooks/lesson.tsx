@@ -47,6 +47,8 @@ type Session = {
   busy?: string
   preparing?: string
   prepAgent?: string
+  prepError?: string
+  prepSince?: number
   healAgent?: string
   build?: Build & { open: boolean; agent?: string }
   lastProbes?: { id: string; ok: boolean; got: string }[]
@@ -63,7 +65,7 @@ async function deviceOf($: EngineInterface) {
 
 async function ctx($: EngineInterface): Promise<Ctx> {
   const s = sess!
-  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, preparing: !!s.preparing, build: s.build?.open ? s.build : undefined }
+  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, preparing: !!s.preparing, prepSince: s.preparing ? s.prepSince : undefined, prepError: s.prepError, build: s.build?.open ? s.build : undefined }
 }
 
 // One poller per folder: a second one would keep polling and dispatch every press twice
@@ -270,6 +272,8 @@ async function prepare($: EngineInterface, after: string, target?: string) {
   if (!nextId || s.segments[nextId]) return
   const phase = s.course.phases.find(p => p.segments.includes(nextId))
   s.preparing = nextId
+  s.prepError = undefined
+  s.prepSince = await $.clock.now()
   await refresh($)
   const r = await $.agent.spawn({
     subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: 'Teach Me: prepare the next lesson',
@@ -288,9 +292,15 @@ async function submitSegment($: EngineInterface, input: { segment: unknown; newS
   const errors = validateSegment(seg, course)
   const project = course.phases.find(p => p.project && p.segments.includes(seg?.id))
   if (!errors.length) errors.push(...untaught(seg, Object.values(s.segments)), ...(project ? milestoneErrors(seg, project, Object.values(s.segments)) : []))
-  if (errors.length) return { ok: false, errors }
+  // A rejection is kept, so a failed attempt says why instead of failing silently
+  const reject = (errs: string[]) => {
+    s.prepError = errs[0]
+    void metric($, { kind: 'segment-rejected', seg: seg?.id, errors: errs.slice(0, 3) })
+    return { ok: false, errors: errs }
+  }
+  if (errors.length) return reject(errors)
   const v = await verifySegment($, seg, s.os)
-  if (!v.ok) return { ok: false, errors: v.errors }
+  if (!v.ok) return reject(v.errors)
   const phases = course.phases.map(p => p.segments.includes(seg.id) ? { ...p, skills: [...new Set([...p.skills, ...seg.skills])] } : p)
   s.course = { ...course, phases }
   s.segments[seg.id] = seg
@@ -546,6 +556,8 @@ export async function lessonStarted($: EngineInterface, cwd: string) {
     void $.ui.open({ id: PANE, title: sess?.course?.subject ?? 'Teach Me' })
   }
   $.clock.every(2000, async () => { if (sess?.vscode) await tick($, sess.vscode) })
+  // While the next lesson is written, redraw so the seconds count shows it is alive
+  $.clock.every(5000, async () => { if (sess?.preparing) await refresh($) })
 }
 
 async function migrateMvp($: EngineInterface, root: string) {
@@ -597,7 +609,7 @@ export async function lessonBandText($: EngineInterface): Promise<string | undef
   const c = await ctx($)
   const at = current(c)
   const where = at ? ` · ${at.seg.title} ${at.index + 1}/${at.seg.steps.length}` : ` · ${c.state.stage}`
-  return `Teach Me · ${sess.course.subject}${where}${sess.vscode?.isUp ? ' · VS Code ●' : ''}`
+  return `Teach Me · ${sess.course.subject}${where}${sess.vscode?.isUp ? ' · VS Code ●' : sess.vscode?.isElsewhere ? ' · VS Code shows a newer Claude Code session' : ''}`
 }
 
 export const registerLesson: Register = on => {
@@ -637,7 +649,7 @@ export const registerLesson: Register = on => {
     }
     if (s?.preparing && e.agentId && e.agentId === s.prepAgent) {
       $.ui.log(`teachme: the author ended without segment ${s.preparing}`, { to: 'debug' })
-      void metric($, { kind: 'prepare-failed', seg: s.preparing })
+      void metric($, { kind: 'prepare-failed', seg: s.preparing, ...(s.prepError ? { reason: s.prepError } : {}) })
       s.preparing = undefined
       s.prepAgent = undefined
       await refresh($)

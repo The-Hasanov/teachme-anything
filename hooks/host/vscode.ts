@@ -18,10 +18,16 @@ export type VsCode = {
   boot?: string
   isPolling: boolean
   isUp: boolean
+  // The window serves one session, the newest: an older one in the same folder is turned away (409)
+  session: string
+  started: number
+  isElsewhere?: boolean
 }
 
 export const newVsCode = (root: string, onPress: VsCode['onPress'], onReady: VsCode['onReady']): VsCode =>
-  ({ root, onPress, onReady, after: 0, isPolling: false, isUp: false })
+  ({ root, onPress, onReady, after: 0, isPolling: false, isUp: false, session: Math.random().toString(36).slice(2, 10), started: Date.now() })
+
+const headers = (v: VsCode, ep: Endpoint) => ({ 'x-teachme-token': ep.token, 'x-teachme-session': v.session, 'x-teachme-started': String(v.started) })
 
 async function find($: EngineInterface, root: string): Promise<Endpoint | undefined> {
   const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
@@ -46,7 +52,9 @@ export async function tick($: EngineInterface, v: VsCode) {
     while (v.ep) {
       const ep = v.ep
       const wait = v.boot ? WAIT_MS : 0
-      const res = await $.http.fetch(`${ep.url}/lesson/events?after=${v.after}&wait=${wait}`, { headers: { 'x-teachme-token': ep.token } }).catch(() => undefined)
+      const res = await $.http.fetch(`${ep.url}/lesson/events?after=${v.after}&wait=${wait}`, { headers: headers(v, ep) }).catch(() => undefined)
+      v.isElsewhere = res?.status === 409
+      if (v.isElsewhere) { v.isUp = false; v.boot = undefined; break }
       if (!res?.ok) { v.ep = undefined; v.isUp = false; v.boot = undefined; break }
       const body = JSON.parse(res.text) as { boot: string; last: number; events: Incoming[] }
       const isNew = body.boot !== v.boot
@@ -67,9 +75,9 @@ export async function tick($: EngineInterface, v: VsCode) {
 
 export async function sendView($: EngineInterface, v: VsCode, screen: Screen, layout?: LayoutOp) {
   const ep = v.ep
-  if (!ep) return
+  if (!ep || v.isElsewhere) return
   await $.http.fetch(`${ep.url}/lesson/view`, {
-    method: 'POST', headers: { 'x-teachme-token': ep.token, 'content-type': 'application/json' },
+    method: 'POST', headers: { ...headers(v, ep), 'content-type': 'application/json' },
     body: JSON.stringify({ screen, ...(layout ? { layout } : {}) }),
   }).catch(() => undefined)
 }

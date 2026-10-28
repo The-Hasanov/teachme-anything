@@ -1,6 +1,6 @@
 {
   "name": "teachme-anything",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Learn any technical skill with Claude Code as your teacher: lessons that answer every click instantly, real exercises checked on your machine, mistakes traced to their cause and re-checked later, in VS Code or the terminal.",
   "author": {
     "name": "The-Hasanov",

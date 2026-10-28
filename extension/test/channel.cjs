@@ -60,6 +60,27 @@ const raw = (port, opts) => new Promise((resolve, reject) => {
     const idle = await (await fetch(`${base}/lesson/events?after=${after}&wait=200`, { headers: auth })).json();
     assert.deepStrictEqual(idle.events, []);
     assert.ok(performance.now() - t >= 190);
+
+    // #10: two Claude Code sessions in one folder. The newest drives the window; the older one is turned away, its
+    // waiting poll is cut off, and it can neither take presses nor draw.
+    const as = (id, started) => ({ ...auth, 'x-teachme-session': id, 'x-teachme-started': String(started) });
+    const old = as('old', 100), fresh = as('new', 200);
+    assert.strictEqual((await fetch(`${base}/lesson/events?after=${after}&wait=0`, { headers: old })).status, 200);
+    const oldWait = fetch(`${base}/lesson/events?after=${after}&wait=20000`, { headers: old });
+    await new Promise(r => setTimeout(r, 20));
+    const newWait = fetch(`${base}/lesson/events?after=${after}&wait=20000`, { headers: fresh });
+    assert.strictEqual((await oldWait).status, 409, 'the older session is cut off when a newer one arrives');
+    await new Promise(r => setTimeout(r, 20));
+    ch.push({ type: 'press', press: { action: 'next' }, t: Date.now() });
+    assert.strictEqual((await (await newWait).json()).events.length, 1, 'only the newest session gets the press');
+    let drawn = [];
+    viewed = (screen) => drawn.push(screen.title);
+    const post = (h, title) => fetch(`${base}/lesson/view`, { method: 'POST', headers: { ...h, 'content-type': 'application/json' }, body: JSON.stringify({ screen: { kind: 'setup', title, actions: [] } }) });
+    assert.strictEqual((await post(old, 'Your setup')).status, 409);
+    assert.strictEqual((await post(fresh, 'Bindings')).status, 204);
+    assert.deepStrictEqual(drawn, ['Bindings'], 'the stale session never draws over the current one');
+    assert.strictEqual((await fetch(`${base}/lesson/events?after=0&wait=0`, { headers: as('older', 50) })).status, 409);
+
     ch.close();
     assert.ok(!fs.existsSync(path.join(dir, `${process.pid}.json`)));
     console.log('PASS channel');

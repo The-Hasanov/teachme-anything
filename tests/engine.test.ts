@@ -317,6 +317,19 @@ test('after a finished segment, Continue goes to the next one or waits for it, n
   expect(l.c.state.done).toBeUndefined()
 })
 
+test('#11 #12 the next lesson shows seconds while written, says when it is slow, and says why it failed', () => {
+  const l = learner()
+  l.toLesson()
+  l.take({ events: [{ ts: l.c.now, type: 'enter', seg: 'branches-1', step: git.branches1.steps.length - 1 }, { ts: l.c.now, type: 'stage', stage: 'recap' }], effects: [] })
+  Object.assign(l.c, { preparing: true, prepSince: l.c.now - 42_000 })
+  expect(screen(l.c).result).toEqual({ tone: 'wait', text: expect.stringMatching(/being written and checked\. About a minute\. 42s so far\.$/) })
+  l.c.prepSince = l.c.now - 200_000
+  expect(screen(l.c).result?.text).toMatch(/200s so far\. Taking longer than usual/)
+  Object.assign(l.c, { preparing: false, prepSince: undefined, prepError: 'b3: probe tests fails on the reference solution (got "cargo: command not found")' })
+  expect(screen(l.c).result).toEqual({ tone: 'wrong', text: 'Your next lesson could not be written: b3: probe tests fails on the reference solution (got "cargo: command not found")' })
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['retry', 'curriculum', 'progress'])
+})
+
 test('"I don\'t know" teaches the idea, brings the skill back, and is neither right nor wrong; the tutor sees the step', () => {
   const l = learner()
   l.toLesson()
