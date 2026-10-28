@@ -5,9 +5,11 @@ import * as python from '../courses/python'
 import { apply, press, replay, screen } from '../hooks/engine/engine'
 import type { Ctx } from '../hooks/engine/engine'
 import type { Course, Press, Screen, Segment } from '../hooks/engine/types'
+import { lessonGuard } from '../hooks/lesson'
 
 const ROOT = 'C:/learn'
-const norm = (p: string) => p.replace(/\\/g, '/')
+// The kit resolves POSIX paths against the host drive (/tmp -> C:/tmp); undo that so a Linux run keys like its cwd.
+const norm = (p: string) => p.replace(/\\/g, '/').replace(/^[A-Za-z]:(?=\/tmp\/)/, '')
 const PANE = {
   plugin: 'teachme-anything', component: 'Pane', requestId: 'teach',
   props: { title: 'Teach Me', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
@@ -15,12 +17,12 @@ const PANE = {
 
 type Run = (argv: readonly string[], cwd: string) => { exitCode: number; stdout: string; stderr?: string } | undefined
 
-function world(on: Parameters<Parameters<typeof test>[1]>[1], run?: Run) {
+function world(on: Parameters<Parameters<typeof test>[1]>[1], run?: Run, os: 'windows' | 'linux' = 'windows') {
   const files: Record<string, string> = {}
   const calls = { model: 0, runs: [] as string[] }
   mock.clock(on, { now: Date.parse('2026-10-27T10:00:00Z') })
   mock.store(on, {})
-  on('env.get', (_, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : e.name === 'USERPROFILE' ? 'C:/Users/learner' : undefined }))
+  on('env.get', (_, e) => ({ value: os === 'linux' ? undefined : e.name === 'OS' ? 'Windows_NT' : e.name === 'USERPROFILE' ? 'C:/Users/learner' : undefined }))
   on('session.cwd', () => ({ value: ROOT }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'tutor' } }))
@@ -297,4 +299,38 @@ test('build with me: pick a suggested project, it is planned into the course, an
   expect(await ui.find({ type: 'Text', text: 'A list in memory' })).toBeTruthy()
   expect(w.files[`${ROOT}/.teachme/log`] ?? Object.entries(w.files).find(([k]) => k.includes('/.teachme/log/'))?.[1]).toMatch(/"type":"added","seg":"todo-1"/)
   await ui.unmount()
+})
+
+// Bug reports, replayed: each test failed before its fix.
+
+test('#6 a tool installed by hand during setup is found on the next Set up press, even with no install plan (Linux)', async ($, on) => {
+  let installed = false
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => {
+    if (/^python3?$/.test(argv[0]!) && argv[1] === '--version') return installed ? { exitCode: 0, stdout: 'Python 3.13.0' } : { exitCode: 127, stdout: '', stderr: 'not found' }
+    return machine(w.files)(argv, cwd)
+  }, 'linux')
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Python' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text).join(' | ')
+  for (const key of ['choose-1', 'choose-1', 'choose-1', 'act-setup']) await ui.press({ key })
+  expect(await texts()).toMatch(/python\.org/)
+  installed = true
+  await ui.press({ key: 'act-setup' })
+  expect(await texts()).toMatch(/✓ Examples and exercises checked on your machine/)
+  await ui.unmount()
+})
+
+test('#7 the Bash guard blocks writes into .teachme/ but lets reads with stderr redirects through', () => {
+  const blocked = [
+    'echo x > .teachme/course.json', 'echo x >> ~/.teachme/log/d1.jsonl', "echo '{}' >'.teachme/state.json'",
+    'rm .teachme/course.json', 'mv a .teachme/b', "sed -i 's/a/b/' .teachme/course.json", 'echo x | tee .teachme/x',
+  ]
+  const allowed = [
+    'ls -la ~/.teachme/vscode/ 2>&1', 'cat .teachme/course.json 2>/dev/null',
+    `python3 -c "import json; print(json.load(open('.teachme/course.json'))['subject'])" 2>/dev/null`,
+    'grep -c stage .teachme/log/d1.jsonl > /tmp/count.txt',
+  ]
+  for (const command of blocked) expect([command, lessonGuard('Bash', { command })]).toEqual([command, expect.stringMatching(/engine only/)])
+  for (const command of allowed) expect([command, lessonGuard('Bash', { command })]).toEqual([command, undefined])
 })

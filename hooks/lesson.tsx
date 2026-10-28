@@ -183,11 +183,11 @@ async function runSetup($: EngineInterface) {
     if (s.state.setup[r.id]?.status === 'ok') continue
     await set(r.id, 'running')
     if (isTool(r.adapter)) {
-      let version = s.env?.tools[r.adapter]
+      let version = s.env?.tools[r.adapter] || (s.env = envCache = await probeEnv($)).tools[r.adapter]
       for (const step of version ? [] : installPlan(r.adapter, s.os)) {
         await set(r.id, 'running', step.label)
         await runCommand($, s.root, step.argv)
-        s.env = await probeEnv($)
+        s.env = envCache = await probeEnv($)
         version = s.env.tools[r.adapter]
         if (version) break
       }
@@ -537,7 +537,7 @@ export function lessonGuard(tool: string, input: { file_path?: string; notebook_
   const isEdit = /^(Edit|Write|NotebookEdit)$/.test(tool)
   if (isEdit && /(^|\/)\.teachme\//.test(path)) return 'Teach Me state is written by the engine only: use its tools (snapshot, submit_segment).'
   if (isEdit && sess && /(^|\/)practice\//.test(path)) return "That folder is the learner's practice work: the tutor never edits it."
-  if (tool === 'Bash' && /\.teachme[\\/]/.test(input.command ?? '') && /(>|\brm\b|\bmv\b|\bsed\s+-i|\btee\b)/.test(input.command ?? '')) return 'Teach Me state is written by the engine only.'
+  if (tool === 'Bash' && /\.teachme[\\/]/.test(input.command ?? '') && /(>>?\s*['"]?[^\s'"]*\.teachme[\\/]|\brm\b|\bmv\b|\bsed\s+-i|\btee\b)/.test(input.command ?? '')) return 'Teach Me state is written by the engine only.'
   return undefined
 }
 
