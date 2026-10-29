@@ -15,6 +15,8 @@ export type Ctx = {
   prepSince?: number
   prepError?: string
   build?: Build
+  // Ask on this step: the agent's explanation once its turn ended, until then the question being answered
+  asked?: { question?: string; answer?: string }
 }
 
 export type Out = { events: LogEvent[]; effects: Effect[] }
@@ -353,6 +355,8 @@ export function press(c: Ctx, p: Press): Out {
   }
   if (action === 'ask') return { events: [{ ts: c.now, type: 'aside', on: true, step: step.id }], effects: [{ kind: 'ask' }] }
   if (action === 'back') return { events: [{ ts: c.now, type: 'aside', on: false }], effects: [] }
+  // A question of their own about the step, typed beside it while stepped aside
+  if (s.aside && 'text' in p) return p.text.trim() ? { events: [], effects: [{ kind: 'ask', question: p.text.trim().slice(0, 300) }] } : NONE
   if (action === 'curriculum') return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
   if (action === 'dontknow' && step.choices && !s.result[step.id] && s.idk[step.id] === undefined) return { events: [{ ts: c.now, type: 'dontknow', step: step.id, ...(step.skill ? { skill: step.skill } : {}) }], effects: [] }
   if ('choose' in p) return answer(c, at, p.choose)
@@ -393,8 +397,9 @@ const ahead = (c: Ctx) => {
   return !next ? 'end' : c.segments[next] ? 'ready' : c.preparing ? 'writing' : 'missing'
 }
 
+// A question without choices (one cached before the schema refused it, #15) has nothing to answer: Next goes on
 const canLeave = (c: Ctx, step: Step) =>
-  QUESTION_KINDS.has(step.kind) ? !!c.state.result[step.id] || c.state.idk[step.id] !== undefined : TASK_KINDS.has(step.kind) ? !!c.state.solved[step.id] || !!c.state.result[step.id]?.branch : true
+  QUESTION_KINDS.has(step.kind) && step.choices ? !!c.state.result[step.id] || c.state.idk[step.id] !== undefined : TASK_KINDS.has(step.kind) ? !!c.state.solved[step.id] || !!c.state.result[step.id]?.branch : true
 const canSkip = (c: Ctx, step: Step) => TASK_KINDS.has(step.kind) && !c.state.solved[step.id] && (c.state.tries[step.id] ?? 0) >= 2
 
 export const setupDone = (c: Ctx) => !!c.course && c.course.setup.length > 0 && c.course.setup.every(r => c.state.setup[r.id]?.status === 'ok')
@@ -544,7 +549,17 @@ export function screen(c: Ctx): Screen {
     ...(level && step.hints ? { hint: { level, text: step.hints[level - 1]! } } : {}),
   }
   const ask = act('ask', 'Ask', false, 'a')
-  if (s.aside) return { kind: 'step', ...base, result: { tone: 'info', text: 'Ask in the chat. Your place here is kept.' }, actions: [act('back', 'Back to step', true, 'b')] }
+  if (s.aside) {
+    const asked = c.asked
+    return {
+      kind: 'step', ...base,
+      result: asked?.answer ? { tone: 'info', text: asked.answer }
+        : asked ? { tone: 'wait', text: asked.question ? `Answering "${asked.question}"…` : 'Explaining this step…' }
+        : { tone: 'info', text: 'Ask in the chat. Your place here is kept.' },
+      input: { placeholder: 'Ask your own question about this step' },
+      actions: [act('back', 'Back to step', true, 'b')],
+    }
+  }
   if (step.choices) {
     const draft = s.draft[step.id] ?? []
     const edit = !res && draft.length ? [act('undo', 'Undo', false, 'u'), act('clear', 'Start over')] : []

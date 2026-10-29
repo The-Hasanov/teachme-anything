@@ -5,6 +5,7 @@ const CLASSES = ['slip', 'misconception', 'prereq', 'environment', 'misread']
 const SKILL_TYPES = ['code', 'tool', 'data', 'config', 'ops', 'concept', 'design']
 const RUNNABLE = ['python', 'sql', 'javascript', 'js']
 const TEACHING = ['concept', 'compare', 'worked', 'stepper']
+const QUESTIONS = ['predict', 'mcq', 'reorder', 'spot-bug', 'trace']
 const MAX_BODY_WORDS = 80
 const MAX_CODE_LINES = 12
 
@@ -122,6 +123,8 @@ export function validateSegment(g: any, course?: Course): string[] {
     if (known && s?.skill && !known.has(s.skill)) err.push(`${at}: unknown skill ${s.skill}`)
     if (s?.uses !== undefined && (!isArr(s.uses) || !s.uses.every((u: unknown) => isStr(u) && (!known || known.has(u))))) err.push(`${at}: uses lists known skill ids`)
     if (s?.remedy && (!s.drill || (tags && !tags.has(s.remedy)))) err.push(`${at}: remedy must be a known misconception tag, on a drill step`)
+    // A question with nothing to pick shows its answer (a run output) and can never be answered (#15)
+    if (QUESTIONS.includes(s?.kind) && !s.choices) err.push(`${at}: a ${s.kind} step needs choices and a key (0-based indexes into choices)`)
     if (s?.choices) {
       if (!isArr(s.choices) || s.choices.length < 2 || s.choices.length > 8) err.push(`${at}: 2–8 choices`)
       else s.choices.forEach((ch: any, j: number) => { if (!isStr(ch?.text) || !isStr(ch?.why)) err.push(`${at}: choice ${j + 1} needs text and why`) })

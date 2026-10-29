@@ -107,3 +107,21 @@ test('spot-the-bug picks a line; a code task is an exercise checked by its tests
   expect(t.sc().kind).toBe('exercise')
   expect(t.go({ action: 'check' }).effects).toEqual([{ kind: 'check', step: 'p7' }])
 })
+
+test('#15 a predict step with a run output but no choices is refused, and one cached before that can be left with Next', () => {
+  const o4 = bigo.bigo1.steps.find(x => x.id === 'o4')!
+  // What the author wrote in the report: the answer text as the key, no choices
+  const { choices: _c, wrong: _w, ...rest } = o4
+  const bare = { ...rest, key: '6' } as unknown as typeof o4
+  const seg = { ...bigo.bigo1, steps: bigo.bigo1.steps.map(x => (x.id === 'o4' ? bare : x)) }
+  expect(validateSegment(seg, bigo.course).join('\n')).toMatch(/o4\): a predict step needs choices and a key/)
+  for (const kind of ['mcq', 'reorder', 'spot-bug', 'trace'] as const) {
+    const g = { ...seg, steps: seg.steps.map(x => (x.id === 'o4' ? { ...bare, kind } : x)) }
+    expect(validateSegment(g, bigo.course).join('\n')).toMatch(new RegExp(`a ${kind} step needs choices`))
+  }
+
+  const l = at(bigo.course, seg, 'o4')
+  expect(l.sc().output).toBe('6')
+  expect(l.sc().actions.map(a => a.id)).toEqual(['next', 'ask'])
+  expect(l.go({ action: 'next' }).events.map(e => e.type)).toEqual(['enter'])
+})

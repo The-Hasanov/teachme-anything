@@ -68,7 +68,7 @@ Rules:
 - You may add new skills to the course with the newSkills field (id, title, type, prereqs, misconceptions).
 - Every skill in the segment's "skills" needs a graded step (a question or a task, not a drill).
 - Step kinds: concept, compare, worked, predict, mcq, spot-bug (choices are code lines), reorder (key lists every choice once, in order), trace (a table with "?" cells; key has one choice per "?" cell, row by row), stepper (2+ frames: note, optional state or code), terminal and code tasks (check; a code task names its file in "open").
-- A python, sql or javascript example needs code.run {file, argv, out}: the verifier writes the source to file, runs argv and compares the output with out (in the practice folder when there is one). A predict key, and a trace's key cells one per line, must be exactly that output. Use "python", never "python3", in argv.
+- A python, sql or javascript example needs code.run {file, argv, out}: the verifier writes the source to file, runs argv and compares the output with out (in the practice folder when there is one). Every predict, mcq, spot-bug, reorder and trace step has choices and a key of 0-based indexes into them, never the answer text: a predict's keyed choice, and a trace's key cells one per line, must be exactly that output. Use "python", never "python3", in argv.
 - A practice folder ("practice": {adapter, dir under practice/, scaffold}) is built with commands; ["@write", file, text] writes a file. Tests or probes must fail on the scaffold and pass after the reference.
 Do not write files. Do not talk to the learner.`
 

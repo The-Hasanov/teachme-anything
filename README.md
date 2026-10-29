@@ -39,7 +39,8 @@ back from a new angle until it is fixed for good.
 - **Your progress.** Accuracy, right at the first try, time per answer, a learning curve, your strengths and what
   to work on, all from your own answers. Press **Progress** in the lesson, or ask "how am I doing?".
 - **Click, don't type.** Buttons and keys (1–8, Enter, H for a hint, A to ask, G for progress) for everything.
-  Questions of your own go to the chat, and your place in the lesson is kept.
+  **Ask** sends the step to Claude: the explanation shows in the chat and under the step, and you can type a question
+  of your own there. Your place in the lesson is kept.
 - **Pick up anywhere.** Progress is a log in `.teachme/`, one file per device: keep the folder in git and continue
   on another machine. `PROGRESS.md` shows where you are.
 
