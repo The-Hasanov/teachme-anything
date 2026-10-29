@@ -393,8 +393,9 @@ const ahead = (c: Ctx) => {
   return !next ? 'end' : c.segments[next] ? 'ready' : c.preparing ? 'writing' : 'missing'
 }
 
+// A question without choices (one cached before the schema refused it, #15) has nothing to answer: Next goes on
 const canLeave = (c: Ctx, step: Step) =>
-  QUESTION_KINDS.has(step.kind) ? !!c.state.result[step.id] || c.state.idk[step.id] !== undefined : TASK_KINDS.has(step.kind) ? !!c.state.solved[step.id] || !!c.state.result[step.id]?.branch : true
+  QUESTION_KINDS.has(step.kind) && step.choices ? !!c.state.result[step.id] || c.state.idk[step.id] !== undefined : TASK_KINDS.has(step.kind) ? !!c.state.solved[step.id] || !!c.state.result[step.id]?.branch : true
 const canSkip = (c: Ctx, step: Step) => TASK_KINDS.has(step.kind) && !c.state.solved[step.id] && (c.state.tries[step.id] ?? 0) >= 2
 
 export const setupDone = (c: Ctx) => !!c.course && c.course.setup.length > 0 && c.course.setup.every(r => c.state.setup[r.id]?.status === 'ok')
