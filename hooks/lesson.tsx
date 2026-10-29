@@ -4,7 +4,7 @@ import * as bigo from '../courses/bigo'
 import * as git from '../courses/git'
 import * as python from '../courses/python'
 import * as sql from '../courses/sql'
-import type { EngineInterface, Register } from 'claude-code'
+import type { AgentSpawnArgs, AgentSpawnResult, EngineInterface, Register } from 'claude-code'
 
 import { checked, current, level, press, screen, setupDone, snapshot, taught, withProject } from './engine/engine'
 import type { Ctx, Out } from './engine/engine'
@@ -237,13 +237,15 @@ async function heal($: EngineInterface) {
   const failed = s.course.setup.filter(r => s.state.setup[r.id]?.status === 'failed').map(r => `- ${r.title} (adapter ${r.adapter}): ${s.state.setup[r.id]!.note ?? 'failed'}`)
   s.busy = HEALING
   await refresh($)
-  const r = await $.agent.spawn({
+  s.healAgent = RELAYING
+  await spawnAgent($, {
     subagentType: `${PLUGIN}:doctor`, description: 'Teach Me: fix the setup',
     prompt: [`OS: ${s.os}. Folder: ${s.root}. Tools the engine found: ${JSON.stringify(s.env?.tools ?? {})}.`, 'Failed setup items:', ...failed].join('\n'),
+  }, async r => {
+    if (r.deny) { s.busy = undefined; s.healAgent = undefined; $.ui.log(`teachme: doctor not started: ${r.deny}`, { to: 'debug' }); await refresh($) }
+    else s.healAgent = r.agentId
+    void metric($, { kind: 'heal', items: failed.length, started: !r.deny })
   })
-  if ('deny' in r && r.deny) { s.busy = undefined; $.ui.log(`teachme: doctor not started: ${r.deny}`, { to: 'debug' }); await refresh($) }
-  else s.healAgent = r.agentId
-  void metric($, { kind: 'heal', items: failed.length, started: !('deny' in r && r.deny) })
 }
 
 async function remedy($: EngineInterface, tag: string, skill?: string) {
@@ -253,15 +255,30 @@ async function remedy($: EngineInterface, tag: string, skill?: string) {
   const n = Object.keys(s.segments).filter(id => id.startsWith(`remedy-${tag}-`)).length + 1
   const belief = s.course.skills.flatMap(k => k.misconceptions).find(m => m.tag === tag)?.belief ?? tag
   const seen = Object.values(s.segments).flatMap(g => g.steps).filter(x => x.remedy === tag || x.wrong?.some(w => w.tag === tag)).map(x => `"${x.title}": ${x.body}`)
-  const r = await $.agent.spawn({
+  await spawnAgent($, {
     subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: 'Teach Me: a new angle for a mistake',
     prompt: [
       `Write segment "remedy-${tag}-${n}": two drill steps (drill: true, remedy: "${tag}", kind "mcq" or "predict", skill "${skill ?? ''}", no practice, no check) for this misconception: ${belief}.`,
       'Use an explanation angle and a contrasting example the learner has NOT seen. They already saw:', ...seen.slice(0, 6),
       `Learner snapshot:\n${snapshot(await ctx($))}`, `Course:\n${JSON.stringify(s.course)}`,
     ].join('\n'),
-  })
-  void metric($, { kind: 'remedy', tag, started: !('deny' in r && r.deny) })
+  }, r => { void metric($, { kind: 'remedy', tag, started: !r.deny }) })
+}
+
+// An agent spawned by the plugin's own code outside a hook (a press handled after its hook returned, the VS Code
+// poller, a timer) runs under the plugin's own origin, and the engine skips all of this plugin's hooks for that
+// agent's tool calls: its submit_segment then fails with "no tool.call hook answered this call" (#13). The ends of
+// agents reach us all the same, so each agent is started from the turn.complete hook of a one-line relay agent:
+// a hook frame of the engine's, under which its calls reach our tool.call hooks.
+const RELAYING = 'relaying'
+const relays = new Map<string, () => Promise<void>>()
+type Spawned = Pick<AgentSpawnResult, 'agentId'> & { deny?: string }
+
+async function spawnAgent($: EngineInterface, spec: AgentSpawnArgs, then: (r: Spawned) => void | Promise<void>): Promise<Spawned> {
+  const relay: Spawned = await $.agent.spawn({ subagentType: `${PLUGIN}:relay`, description: spec.description ?? 'Teach Me', prompt: 'Reply OK.' })
+  if (relay.deny || !relay.agentId) { await then(relay.deny ? relay : { deny: 'the relay agent did not start' }); return relay }
+  relays.set(relay.agentId, async () => { await then(await $.agent.spawn(spec)) })
+  return relay
 }
 
 async function prepare($: EngineInterface, after: string, target?: string) {
@@ -274,14 +291,16 @@ async function prepare($: EngineInterface, after: string, target?: string) {
   s.preparing = nextId
   s.prepError = undefined
   s.prepSince = await $.clock.now()
+  s.prepAgent = undefined
   await refresh($)
-  const r = await $.agent.spawn({
+  await spawnAgent($, {
     subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: 'Teach Me: prepare the next lesson',
     prompt: authorTask(s.course, s.segments[after] ?? python.lists1, snapshot(await ctx($)), nextId, phase?.title ?? ''),
+  }, async r => {
+    if (r.deny) { s.preparing = undefined; $.ui.log(`teachme: author not started: ${r.deny}`, { to: 'debug' }); await refresh($) }
+    else if (s.preparing === nextId) s.prepAgent = r.agentId
+    void metric($, { kind: 'prepare', seg: nextId, started: !r.deny })
   })
-  if ('deny' in r && r.deny) { s.preparing = undefined; $.ui.log(`teachme: author not started: ${r.deny}`, { to: 'debug' }); await refresh($) }
-  else s.prepAgent = r.agentId
-  void metric($, { kind: 'prepare', seg: nextId, started: !('deny' in r && r.deny) })
 }
 
 async function submitSegment($: EngineInterface, input: { segment: unknown; newSkills?: Course['skills'] }) {
@@ -357,13 +376,11 @@ async function generateCourse($: EngineInterface, subject: string, root: string,
   await commit($, { events: [{ ts: t0, type: 'course', course: id }], effects: [] })
   await $.ui.open({ id: PANE, title: subject })
   const tools = Object.entries(env.tools).filter(([, v]) => v).map(([k, v]) => `${k} (${v})`).join(', ')
-  const r = await $.agent.spawn({
+  const relay = await spawnAgent($, {
     subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: `Teach Me: a new course on ${subject}`,
     prompt: courseTask(subject, `${env.os}; ${tools || 'no developer tools found'}`, { course: python.course, segment: python.lists1 }, background, project),
-  })
-  const started = !('deny' in r && r.deny)
-  void metric($, { kind: 'generate', subject, started })
-  if (!started) return { ok: false, reason: `the course author could not start: ${'deny' in r ? r.deny : ''}` }
+  }, r => { void metric($, { kind: 'generate', subject, started: !r.deny }) })
+  if (relay.deny) return { ok: false, reason: `the course author could not start: ${relay.deny}` }
   return { ok: true, course: subject, generating: true, ...(background ? { writtenFor: background } : {}), next: 'The lesson view asks 3 questions while a course is written for this learner (about a minute). Say one short line; nothing else to do.' }
 }
 
@@ -407,12 +424,14 @@ async function planProject($: EngineInterface, pick: ProjectPick) {
   if (!s.course) { s.build = undefined; await generateCourse($, pick.subject ?? pick.title, s.root, undefined, pick); return }
   s.build = { ...s.build!, stage: 'planning', title: pick.title, open: true, note: undefined }
   await refresh($)
-  const r = await $.agent.spawn({
+  await spawnAgent($, {
     subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: 'Teach Me: plan a project to build together',
     prompt: projectTask(s.course, snapshot(await ctx($)), pick),
+  }, async r => {
+    if (!s.build) return
+    if (r.deny) { s.build = { ...s.build, stage: 'pick', note: 'Planning could not start. Pick again.' }; return refresh($) }
+    s.build.agent = r.agentId
   })
-  if ('deny' in r && r.deny) { s.build = { ...s.build, stage: 'pick', note: 'Planning could not start. Pick again.' }; return refresh($) }
-  s.build.agent = r.agentId
 }
 
 async function submitProject($: EngineInterface, input: { phase: unknown; segment: unknown; newSkills?: Course['skills'] }) {
@@ -545,6 +564,8 @@ export async function lessonRegister($: EngineInterface) {
   })
   await $.agent.register({ name: 'author', description: 'Writes Teach Me courses and lesson segments for one learner.', prompt: AUTHOR_PROMPT, tools: [TOOL('submit_course'), TOOL('submit_segment'), TOOL('submit_project')], model: AUTHOR_MODEL })
     .catch(err => $.ui.log(`teachme: author agent: ${err}`, { to: 'debug' }))
+  await $.agent.register({ name: 'relay', description: 'Teach Me: starts the author or the doctor.', prompt: 'Reply OK, nothing else.', tools: [], model: 'haiku' })
+    .catch(err => $.ui.log(`teachme: relay agent: ${err}`, { to: 'debug' }))
   await $.agent.register({ name: 'doctor', description: 'Finds why a Teach Me setup item fails on this machine and fixes it.', prompt: DOCTOR_PROMPT, tools: ['Bash', 'Read', 'Glob', 'Grep', TOOL('recheck_setup')], model: 'sonnet' })
     .catch(err => $.ui.log(`teachme: doctor agent: ${err}`, { to: 'debug' }))
 }
@@ -614,6 +635,7 @@ export async function lessonBandText($: EngineInterface): Promise<string | undef
 
 export const registerLesson: Register = on => {
   on('agent.offer', { agent: `${PLUGIN}:author` }, () => ({ isOffered: false }))
+  on('agent.offer', { agent: `${PLUGIN}:relay` }, () => ({ isOffered: false }))
 
   on('tool.check', async ($, e, next) => OWN_TOOLS.has(e.tool) ? { decision: 'allow', reason: 'Teach Me engine tool' } : next(e))
 
@@ -636,6 +658,12 @@ export const registerLesson: Register = on => {
 
   // The author of the next segment ended without a valid submit_segment: say so and offer a retry
   on('turn.complete', async ($, e, next) => {
+    const relayed = e.agentId ? relays.get(e.agentId) : undefined
+    if (relayed) {
+      relays.delete(e.agentId!)
+      await relayed().catch(err => $.ui.log(`teachme: relayed spawn failed: ${err}`, { to: 'debug' }))
+      return next(e)
+    }
     const s = sess
     if (s?.build?.stage === 'planning' && e.agentId && e.agentId === s.build.agent) {
       void metric($, { kind: 'project-failed', title: s.build.title })
