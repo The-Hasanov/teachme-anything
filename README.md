@@ -18,7 +18,7 @@ back from a new angle until it is fixed for good.
 
    ```sh
    cd extension && npm install && npm run package
-   code --install-extension teachme-anything-0.6.2.vsix
+   code --install-extension teachme-anything-0.6.3.vsix
    ```
 
 3. In an empty folder, tell Claude Code: **"teach me &lt;subject&gt;"**.
