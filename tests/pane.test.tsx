@@ -331,6 +331,36 @@ test('build with me: pick a suggested project, it is planned into the course, an
 
 // Bug reports, replayed: each test failed before its fix.
 
+test('#14 Ask sends the step to the agent, and its explanation shows under the step; a question of their own goes too', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  const sent: string[] = []
+  on('prompt.submit', (_, e) => { sent.push(e.text ?? ''); return { text: e.text ?? '' } })
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Big-O' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  for (const key of ['choose-1', 'choose-1', 'choose-1', 'act-setup', 'act-continue', 'act-start']) await ui.press({ key })
+  const texts = async () => [...await ui.findAll({ type: 'Text' }), ...await ui.findAll({ type: 'Markdown' })].map(t => t.text).join(' | ')
+
+  await ui.press({ key: 'act-ask' })
+  expect(sent).toHaveLength(1)
+  expect(sent[0]).toMatch(/Explain the idea behind the Teach Me step "Big-O counts growth"[\s\S]*<teachme-position>[\s\S]*Big-O counts growth/)
+  expect(await texts()).toMatch(/Explaining this step…/)
+  // The agent's turn: its prompt is the one sent, framed by the engine
+  await $.turn.start({ text: `The teachme-anything plugin sent a message:\n${sent[0]}`, turnId: 'q1' } as never)
+  await $.turn.complete({ answer: 'Big-O asks how the work grows as the input grows.', durationMs: 1, isAborted: false, turnId: 'q1', reason: 'answer' })
+  expect(await texts()).toMatch(/Big-O asks how the work grows as the input grows\./)
+
+  await $.ui.input({ plugin: 'teachme-anything', key: 'intake-text', text: 'why not count seconds?' })
+  expect(sent[1]).toMatch(/About the Teach Me step "Big-O counts growth": why not count seconds\?/)
+  expect(await texts()).toMatch(/Answering "why not count seconds\?"…/)
+  await ui.press({ key: 'act-back' })
+  expect(await texts()).not.toMatch(/Answering|Explaining|Ask in the chat/)
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toContain('Ask')
+  await ui.unmount()
+})
+
 test('#13 the author of the next lesson, asked for by a press, starts from a relay\'s end, so its submit_segment is answered', async ($, on) => {
   // In Claude Code an agent spawned outside a hook runs under the plugin's own origin, and the engine then skips the
   // plugin's tool.call hooks for that agent's calls. The kit does not model origins, so this holds the plugin to the

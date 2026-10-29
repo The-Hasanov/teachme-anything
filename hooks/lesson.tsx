@@ -53,6 +53,8 @@ type Session = {
   build?: Build & { open: boolean; agent?: string }
   lastProbes?: { id: string; ok: boolean; got: string }[]
   vscode?: VsCode
+  // Ask: the prompt sent to the agent for this step, the turn that answers it, and its answer
+  asking?: { step: string; prompt: string; question?: string; turn?: string; answer?: string }
 }
 
 let sess: Session | undefined
@@ -65,7 +67,13 @@ async function deviceOf($: EngineInterface) {
 
 async function ctx($: EngineInterface): Promise<Ctx> {
   const s = sess!
-  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, preparing: !!s.preparing, prepSince: s.preparing ? s.prepSince : undefined, prepError: s.prepError, build: s.build?.open ? s.build : undefined }
+  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, preparing: !!s.preparing, prepSince: s.preparing ? s.prepSince : undefined, prepError: s.prepError, build: s.build?.open ? s.build : undefined, asked: askedHere(s) }
+}
+
+const askedHere = (s: Session) => {
+  const a = s.asking
+  return a && s.state.aside && s.state.pos && s.segments[s.state.pos.seg]?.steps[s.state.pos.step]?.id === a.step
+    ? { ...(a.question ? { question: a.question } : {}), ...(a.answer ? { answer: a.answer } : {}) } : undefined
 }
 
 // One poller per folder: a second one would keep polling and dispatch every press twice
@@ -105,6 +113,7 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
   const t0 = await $.clock.now()
   if (s.build?.open) return buildPress($, p)
   if ('action' in p && p.action === 'progress') { s.progress = true; return refresh($) }
+  if ('action' in p && p.action === 'back') s.asking = undefined
   if (s.progress) { if ('action' in p && p.action === 'back') { s.progress = false; await refresh($) } return }
   if (s.welcome && 'action' in p && (p.action === 'continue' || p.action === 'curriculum')) {
     const out = press(await ctx($), p)
@@ -123,9 +132,13 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
   void metric($, { kind: 'press', press: p, ms: t1 - t0, ...(sentAt ? { fromView: t1 - sentAt } : {}) })
 }
 
+// The effects run() handles. tests/invariants checks that the engine asks for no other; run() throws on one it can't do.
+export const HANDLED_EFFECTS: readonly Effect['kind'][] = ['check', 'escalate', 'setup', 'heal', 'practice', 'prepare', 'remedy', 'ask']
+
 async function run($: EngineInterface, fx: Effect) {
   const s = sess!
   try {
+    if (!HANDLED_EFFECTS.includes(fx.kind)) throw new Error('no handler for this effect')
     if (fx.kind === 'check') {
       const at = current(await ctx($))
       const dir = practiceDir(s, at?.seg)
@@ -153,11 +166,30 @@ async function run($: EngineInterface, fx: Effect) {
     if (fx.kind === 'practice') return ensurePractice($, fx.dir, fx.seg)
     if (fx.kind === 'prepare') return prepare($, fx.after)
     if (fx.kind === 'remedy') return remedy($, fx.tag, fx.skill)
+    if (fx.kind === 'ask') return ask($, fx.question)
+    throw new Error('no handler for this effect')
   } catch (err) {
     s.busy = undefined
     $.ui.log(`teachme: ${fx.kind} failed: ${err}`, { to: 'debug' })
     await refresh($)
   }
+}
+
+// Ask: the step goes to the agent in the chat, and its answer shows under the step too (#14)
+async function ask($: EngineInterface, question?: string) {
+  const s = sess!
+  const at = current(await ctx($))
+  if (!at) return
+  const prompt = [
+    question ? `About the Teach Me step "${at.step.title}": ${question}` : `Explain the idea behind the Teach Me step "${at.step.title}" in more depth.`,
+    'Follow the explain-step way: never give away an answer the learner has not found yet. Up to 6 short sentences, plain words, no headings.',
+    `<teachme-position>\n${snapshot(await ctx($))}\n</teachme-position>`,
+  ].join('\n\n')
+  s.asking = { step: at.step.id, prompt, ...(question ? { question } : {}) }
+  await refresh($)
+  void metric($, { kind: 'ask', step: at.step.id, own: !!question })
+  const r = await $.prompt.submit({ text: prompt })
+  if (r.drop && s.asking?.prompt === prompt) { s.asking = { ...s.asking, answer: `Ask in the chat. Your place here is kept. (${r.drop})` }; await refresh($) }
 }
 
 async function ensurePractice($: EngineInterface, rel: string, segId?: string) {
@@ -656,8 +688,20 @@ export const registerLesson: Register = on => {
   on('tool.call', { tool: 'mcp__teachme-anything__recheck_setup' }, async $ => ({ result: await recheck($) }))
   on('tool.call', { tool: 'mcp__teachme-anything__submit_project' }, async ($, e) => ({ result: JSON.stringify(await submitProject($, e as never)) }))
 
+  // The turn that answers Ask: its text holds the prompt sent
+  on('turn.start', async ($, e, next) => {
+    const a = sess?.asking
+    if (a && !a.turn && !e.agentId && e.text.includes(a.prompt.slice(0, 120))) a.turn = e.turnId
+    return next(e)
+  })
+
   // The author of the next segment ended without a valid submit_segment: say so and offer a retry
   on('turn.complete', async ($, e, next) => {
+    const a = sess?.asking
+    if (a?.turn && a.turn === e.turnId && !e.agentId) {
+      a.answer = e.answer.trim() || 'The answer is in the chat.'
+      await refresh($)
+    }
     const relayed = e.agentId ? relays.get(e.agentId) : undefined
     if (relayed) {
       relays.delete(e.agentId!)
@@ -790,7 +834,7 @@ export const registerLesson: Register = on => {
         ))}
         {sc.input && Input && <Input key="intake-text" placeholder={sc.input.placeholder} submitLabel="send" onSubmit={(v: string) => { if (v.trim()) void dispatch($, { text: v }) }} />}
         {sc.hint && <Text color="suggestion">Hint {sc.hint.level}: {sc.hint.text}</Text>}
-        {sc.result && <Text color={tone(sc.result.tone)} italic={sc.result.tone === 'wait'}>{sc.result.tone === 'right' ? '✓ ' : sc.result.tone === 'wrong' ? '✗ ' : ''}{sc.result.text}</Text>}
+        {sc.result && sc.result.tone === 'info' && sc.kind === 'step' ? <Markdown text={sc.result.text} /> : sc.result && <Text color={tone(sc.result.tone)} italic={sc.result.tone === 'wait'}>{sc.result.tone === 'right' ? '✓ ' : sc.result.tone === 'wrong' ? '✗ ' : ''}{sc.result.text}</Text>}
         {sc.actions.length > 0 && (
           <Box flexDirection="row" flexWrap="wrap" gap="sm">
             {sc.actions.map(a => (

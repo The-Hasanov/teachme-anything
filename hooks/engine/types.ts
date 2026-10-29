@@ -161,7 +161,7 @@ export type Effect =
   | { kind: 'prepare'; after: string }
   | { kind: 'remedy'; tag: string; skill?: string }
   | { kind: 'practice'; dir: string; seg: string }
-  | { kind: 'ask' }
+  | { kind: 'ask'; question?: string }
 
 export type ProjectPick = { title: string; pitch: string; subject?: string }
 export type Build = { stage: 'pick' | 'planning' | 'ready'; suggestions: ProjectPick[]; title?: string; note?: string }
