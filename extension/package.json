@@ -2,7 +2,7 @@
   "name": "teachme-anything",
   "displayName": "Teach Me Anything",
   "description": "The Teach Me Anything lesson view for Claude Code: lessons in the side bar, a terminal and files for exercises, never in your way.",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "publisher": "the-hasanov",
   "license": "MIT",
   "repository": {
@@ -78,7 +78,7 @@
   },
   "scripts": {
     "package": "vsce package",
-    "test": "node test/view.cjs && node test/channel.cjs && node test/layout-lint.cjs && node test/integration/run.cjs"
+    "test": "node test/view.cjs && node test/dashboard.cjs && node test/channel.cjs && node test/layout-lint.cjs && node test/integration/run.cjs"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.36"
