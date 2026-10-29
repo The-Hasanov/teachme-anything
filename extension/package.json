@@ -2,7 +2,7 @@
   "name": "teachme-anything",
   "displayName": "Teach Me Anything",
   "description": "The Teach Me Anything lesson view for Claude Code: lessons in the side bar, a terminal and files for exercises, never in your way.",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "publisher": "the-hasanov",
   "license": "MIT",
   "repository": {
