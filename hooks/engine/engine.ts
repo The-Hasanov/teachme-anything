@@ -342,6 +342,8 @@ export function press(c: Ctx, p: Press): Out {
     return NONE
   }
   const at = current(c)
+  const missing = missingSegment(c)
+  if (!at && missing && action === 'retry' && !c.preparing) return { events: [], effects: [{ kind: 'prepare', after: '', seg: missing }] }
   if (!at) return NONE
   const { step } = at
   if (at.warm) {
@@ -389,6 +391,7 @@ function resume(c: Ctx): Out | undefined {
   return first ? enter(c, first, 0) : undefined
 }
 
+const missingSegment = (c: Ctx) => { const seg = c.state.pos?.seg; return seg && !c.segments[seg] ? seg : undefined }
 const nextSegment = (c: Ctx, seg: string) => { const order = c.course ? segmentOrder(c.course) : []; return order[order.indexOf(seg) + 1] }
 // After a finished segment: is the next one ready, being written, missing (nobody writing it), or is the course over
 const ahead = (c: Ctx) => {
@@ -523,7 +526,7 @@ export function screen(c: Ctx): Screen {
     }
   }
   const at = current(c)
-  if (!at) return { kind: 'empty', title: course.subject, body: 'Preparing your lesson…', actions: [] }
+  if (!at) return missingScreen(c, course.subject)
   const { seg, step, index } = at
   const rk = resultKey(c, at)
   const res = s.result[rk]
@@ -650,12 +653,20 @@ const NEXT_TEXT = {
 } as const
 const nextParts = (c: Ctx) => {
   const a = ahead(c)
-  if (a === 'writing' && c.prepSince !== undefined) {
-    const sec = Math.max(0, Math.round((c.now - c.prepSince) / 1000))
-    return { result: { tone: 'wait' as const, text: `${NEXT_TEXT.writing.text} ${sec}s so far.${sec > 180 ? ' Taking longer than usual: it is still trying.' : ''}` } }
-  }
+  if (a === 'writing' && c.prepSince !== undefined) return writingPart(c)
   if (a === 'missing' && c.prepError) return { result: { tone: 'wrong' as const, text: `Your next lesson could not be written: ${c.prepError}` } }
   return a ? { result: NEXT_TEXT[a] } : {}
+}
+function missingScreen(c: Ctx, title: string): Screen {
+  const body = 'Preparing your lesson…'
+  if (c.preparing || !missingSegment(c)) return { kind: 'empty', title, body, ...writingPart(c), actions: [] }
+  const why = c.prepError ? `Your lesson could not be written: ${c.prepError}` : 'Your lesson is not written yet.'
+  return { kind: 'empty', title, body, result: { tone: c.prepError ? 'wrong' : 'info', text: why }, actions: [act('retry', 'Write it now', true, 'enter'), PROGRESS] }
+}
+const writingPart = (c: Ctx) => {
+  if (!c.preparing || c.prepSince === undefined) return {}
+  const sec = Math.max(0, Math.round((c.now - c.prepSince) / 1000))
+  return { result: { tone: 'wait' as const, text: `${NEXT_TEXT.writing.text} ${sec}s so far.${sec > 180 ? ' Taking longer than usual: it is still trying.' : ''}` } }
 }
 const nextActions = (c: Ctx, label: string): Action[] => {
   const a = ahead(c)

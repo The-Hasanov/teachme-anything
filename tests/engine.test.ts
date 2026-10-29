@@ -330,6 +330,20 @@ test('#11 #12 the next lesson shows seconds while written, says when it is slow,
   expect(screen(l.c).actions.map(a => a.id)).toEqual(['retry', 'curriculum', 'progress'])
 })
 
+test('#18 a lesson whose segment is missing says why and offers Write it now, which prepares that segment', () => {
+  const l = learner()
+  l.toLesson()
+  delete l.c.segments['branches-1']
+  expect(screen(l.c)).toMatchObject({ kind: 'empty', result: { tone: 'info', text: 'Your lesson is not written yet.' } })
+  l.c.prepError = 'the author stopped without submitting it and gave no reason'
+  expect(screen(l.c).result).toEqual({ tone: 'wrong', text: 'Your lesson could not be written: the author stopped without submitting it and gave no reason' })
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['retry', 'progress'])
+  expect(press(l.c, { action: 'retry' }).effects).toEqual([{ kind: 'prepare', after: '', seg: 'branches-1' }])
+  Object.assign(l.c, { preparing: true, prepSince: l.c.now - 5_000, prepError: undefined })
+  expect(screen(l.c)).toMatchObject({ actions: [], result: { tone: 'wait', text: expect.stringMatching(/5s so far\.$/) } })
+  expect(press(l.c, { action: 'retry' }).effects).toEqual([])
+})
+
 test('"I don\'t know" teaches the idea, brings the skill back, and is neither right nor wrong; the tutor sees the step', () => {
   const l = learner()
   l.toLesson()

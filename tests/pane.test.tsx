@@ -403,6 +403,44 @@ test('#13 the author of the next lesson, asked for by a press, starts from a rel
   await ui.unmount()
 })
 
+test('#18 an author that ends without submitting records why in the metrics', async ($, on) => {
+  const { files } = world(on)
+  const { prompts, relays, relay, end } = agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Kubernetes' } as never)
+  expect([prompts(), relays]).toEqual([[], ['r1']])
+  await relay()
+  expect(prompts()[0]).toMatch(/teach me Kubernetes/)
+  const call = async (tool: string, input: object, agentId: string) =>
+    JSON.parse((await $.tool.call({ tool: `mcp__teachme-anything__${tool}`, ...input, agentId } as never)).result as string)
+  const course = {
+    format: 'teachme.course/1', id: 'k8s', subject: 'Kubernetes', goal: 'run an app on a cluster', intake: [],
+    skills: [{ id: 'pods', title: 'Pods', type: 'concept', prereqs: [], misconceptions: [] }],
+    phases: [{ id: 'basics', title: 'Pods', skills: ['pods'], segments: ['basics-1', 'basics-2'] }],
+    setup: [{ id: 'verify', title: 'Checked on your machine', adapter: 'verify', where: 'local' }],
+  }
+  const lesson = (id: string, title: string, uses?: string[]) => ({
+    format: 'teachme.script/1', id, title, skills: ['pods'],
+    steps: [
+      { id: `${id}-a`, kind: 'concept', skill: 'pods', difficulty: 1, title, body: 'A pod runs one or more containers together.' },
+      { id: `${id}-b`, kind: 'mcq', skill: 'pods', difficulty: 1, title: 'A pod', body: 'What does a pod run?', choices: [{ text: 'Containers', why: 'Right.' }, { text: 'Clusters', why: 'A cluster runs pods.' }], key: [0], ...(uses ? { uses } : {}) },
+    ],
+  })
+  expect(await call('submit_course', { course }, 'a1')).toMatchObject({ ok: true })
+  expect(await call('submit_segment', { segment: lesson('basics-1', 'Pods') }, 'a1')).toMatchObject({ ok: true })
+  await end('a1')
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  for (const key of ['choose-1', 'choose-2', 'choose-1', 'act-setup', 'act-continue', 'act-start']) await ui.press({ key })
+  expect([prompts().length, relays]).toEqual([1, ['r2']])
+  await relay()
+  expect(prompts()[1]).toMatch(/Write segment "basics-2"/)
+  await end('a2', 'cargo check failed: E0308 mismatched types\nI give up.')
+  const metrics = Object.entries(files).find(([f]) => f.endsWith('/.teachme/metrics.jsonl'))?.[1] ?? ''
+  expect(metrics).toMatch(/"kind":"prepare-failed","seg":"basics-2","reason":"the author stopped without submitting it, saying: cargo check failed: E0308 mismatched types"/)
+  await ui.unmount()
+})
+
 test('#6 a tool installed by hand during setup is found on the next Set up press, even with no install plan (Linux)', async ($, on) => {
   let installed = false
   const w: { files: Record<string, string> } = world(on, (argv, cwd) => {

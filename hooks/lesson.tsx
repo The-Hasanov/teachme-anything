@@ -164,7 +164,7 @@ async function run($: EngineInterface, fx: Effect) {
     if (fx.kind === 'setup') return runSetup($)
     if (fx.kind === 'heal') return heal($)
     if (fx.kind === 'practice') return ensurePractice($, fx.dir, fx.seg)
-    if (fx.kind === 'prepare') return prepare($, fx.after)
+    if (fx.kind === 'prepare') return prepare($, fx.after, fx.seg)
     if (fx.kind === 'remedy') return remedy($, fx.tag, fx.skill)
     if (fx.kind === 'ask') return ask($, fx.question)
     throw new Error('no handler for this effect')
@@ -311,6 +311,11 @@ async function spawnAgent($: EngineInterface, spec: AgentSpawnArgs, then: (r: Sp
   if (relay.deny || !relay.agentId) { await then(relay.deny ? relay : { deny: 'the relay agent did not start' }); return relay }
   relays.set(relay.agentId, async () => { await then(await $.agent.spawn(spec)) })
   return relay
+}
+
+const authorEndReason = (answer: string) => {
+  const said = answer.trim().split('\n').find(line => line.trim())?.trim().slice(0, 300)
+  return said ? `the author stopped without submitting it, saying: ${said}` : 'the author stopped without submitting it and gave no reason'
 }
 
 async function prepare($: EngineInterface, after: string, target?: string) {
@@ -720,8 +725,9 @@ export const registerLesson: Register = on => {
       await recheck($)
     }
     if (s?.preparing && e.agentId && e.agentId === s.prepAgent) {
-      $.ui.log(`teachme: the author ended without segment ${s.preparing}`, { to: 'debug' })
-      void metric($, { kind: 'prepare-failed', seg: s.preparing, ...(s.prepError ? { reason: s.prepError } : {}) })
+      s.prepError ??= authorEndReason(e.answer)
+      $.ui.log(`teachme: the author ended without segment ${s.preparing}: ${s.prepError}`, { to: 'debug' })
+      void metric($, { kind: 'prepare-failed', seg: s.preparing, reason: s.prepError })
       s.preparing = undefined
       s.prepAgent = undefined
       await refresh($)
