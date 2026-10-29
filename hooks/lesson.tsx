@@ -6,7 +6,7 @@ import * as python from '../courses/python'
 import * as sql from '../courses/sql'
 import type { AgentSpawnArgs, AgentSpawnResult, EngineInterface, Register } from 'claude-code'
 
-import { checked, current, level, press, screen, setupDone, snapshot, taught, withProject } from './engine/engine'
+import { checked, current, dashboard, level, press, screen, setupDone, snapshot, taught, withProject } from './engine/engine'
 import type { Ctx, Out } from './engine/engine'
 import { replay } from './engine/engine'
 import type { Build, Course, Effect, LogEvent, Line, Phase, Press, ProjectPick, Screen, Segment } from './engine/types'
@@ -113,9 +113,10 @@ async function metric($: EngineInterface, m: Record<string, unknown>) {
 async function refresh($: EngineInterface, layout?: LayoutOp) {
   const s = sess
   if (!s) return
-  const sc = screen(await ctx($))
+  const c = await ctx($)
+  const sc = screen(c)
   await update($, view, () => sc)
-  if (s.vscode) void sendView($, s.vscode, sc, layout)
+  if (s.vscode) void sendView($, s.vscode, sc, layout, dashboard(c))
 }
 
 async function commit($: EngineInterface, out: Out) {
@@ -136,6 +137,7 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
   if (!s) return
   const t0 = await $.clock.now()
   if (s.build?.open) return buildPress($, p)
+  if ('action' in p && p.action === 'tutor') return void await lessonTutor($)
   if ('action' in p && p.action === 'progress') { s.progress = true; return refresh($) }
   if ('action' in p && p.action === 'back') s.asking = undefined
   if (s.progress) { if ('action' in p && p.action === 'back') { s.progress = false; await refresh($) } return }

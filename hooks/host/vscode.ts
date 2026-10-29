@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { Press, Screen } from '../engine/types'
+import type { Dashboard, Press, Screen } from '../engine/types'
 
 export type LayoutOp = { op: 'terminal'; cwd: string } | { op: 'reference'; path: string } | { op: 'practice'; path: string } | { op: 'reveal'; cwd?: string; path?: string }
 type Endpoint = { url: string; token: string; pid: number }
@@ -73,11 +73,11 @@ export async function tick($: EngineInterface, v: VsCode) {
   }
 }
 
-export async function sendView($: EngineInterface, v: VsCode, screen: Screen, layout?: LayoutOp) {
+export async function sendView($: EngineInterface, v: VsCode, screen: Screen, layout?: LayoutOp, dashboard?: Dashboard) {
   const ep = v.ep
   if (!ep || v.isElsewhere) return
   await $.http.fetch(`${ep.url}/lesson/view`, {
     method: 'POST', headers: { ...headers(v, ep), 'content-type': 'application/json' },
-    body: JSON.stringify({ screen, ...(layout ? { layout } : {}) }),
+    body: JSON.stringify({ screen, ...(layout ? { layout } : {}), ...(dashboard ? { dashboard } : {}) }),
   }).catch(() => undefined)
 }

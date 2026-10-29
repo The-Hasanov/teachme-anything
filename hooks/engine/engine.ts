@@ -1,7 +1,7 @@
 import { RETENTION, dueAt, ratingOf, retrievability, review } from './fsrs'
 import { classify, skillState } from './mastery'
 import { WINDOW, pct, stats } from './stats'
-import type { Action, Build, Course, Effect, LearnerState, LogEvent, MistakeClass, Phase, Press, Screen, Segment, Step, WarmItem, Weakness } from './types'
+import type { Action, Build, Course, Dashboard, Effect, LearnerState, LessonStatus, LogEvent, MistakeClass, Phase, Press, Screen, Segment, Step, WarmItem, Weakness } from './types'
 
 export type Ctx = {
   state: LearnerState
@@ -731,6 +731,32 @@ function progressScreen(c: Ctx): Screen {
       { title: 'Skills', lines: st.skills.map(k => ({ mark: SKILL_MARK[k.state], text: k.title, detail: [k.answers ? right(k) : '', k.state, k.idk ? `${k.idk}× "I don't know"` : ''].filter(Boolean).join(' · ') })) },
     ],
   }
+}
+
+export function dashboard(c: Ctx): Dashboard | undefined {
+  const course = c.course
+  if (!course) return undefined
+  const s = c.state
+  const order = segmentOrder(course)
+  const now = s.done ? undefined : s.pos?.seg
+  const finished = s.done ? order.indexOf(s.done) : now ? order.indexOf(now) - 1 : -1
+  const missing = order.findIndex((id, i) => i > finished && !c.segments[id])
+  const status = (id: string, i: number): LessonStatus =>
+    i <= finished ? 'done' : id === now ? 'now' : c.segments[id] ? 'ready' : i !== missing ? 'todo' : c.preparing ? 'writing' : c.prepError ? 'failed' : 'todo'
+  const lesson = (id: string) => {
+    const seg = c.segments[id]
+    const st = status(id, order.indexOf(id))
+    const steps = st === 'now' && seg && s.pos ? `${stepNumber(seg, s.pos.step)} of ${seg.steps.filter(x => !x.drill).length} steps` : undefined
+    return { title: seg?.title ?? 'Not written yet', status: st, ...(steps ? { steps } : {}) }
+  }
+  const phases = course.phases.map(p => {
+    const lessons = p.segments.map(lesson)
+    const done = lessons.filter(l => l.status === 'done').length
+    const mark = done === lessons.length && lessons.length ? 'ok' as const : lessons.some(l => l.status !== 'todo' && l.status !== 'ready') || done ? 'now' as const : 'todo' as const
+    return { title: p.title, mark, done, total: lessons.length, lessons }
+  })
+  const done = phases.reduce((n, p) => n + p.done, 0)
+  return { title: course.subject, goal: course.goal, overall: { label: `${done} of ${order.length} lessons`, done, total: order.length }, phases }
 }
 
 const stepNumber = (seg: Segment, index: number) => seg.steps.slice(0, index + 1).filter(x => !x.drill).length || 1

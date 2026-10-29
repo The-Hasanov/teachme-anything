@@ -153,6 +153,14 @@ export type LearnerState = {
 
 export type { Action, Line, Screen } from '../../types'
 
+export type LessonStatus = 'done' | 'now' | 'ready' | 'writing' | 'failed' | 'todo'
+export type Dashboard = {
+  title: string
+  goal: string
+  overall: { label: string; done: number; total: number }
+  phases: { title: string; mark: 'ok' | 'now' | 'todo'; done: number; total: number; lessons: { title: string; status: LessonStatus; steps?: string }[] }[]
+}
+
 export type Effect =
   | { kind: 'check'; step: string }
   | { kind: 'escalate'; esc: string; step: string; probe?: string; got?: string; picked?: number[] }

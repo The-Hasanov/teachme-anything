@@ -49,6 +49,12 @@
     },
     "commands": [
       {
+        "command": "teachme.dashboard",
+        "title": "Open dashboard",
+        "category": "Teach Me",
+        "icon": "$(dashboard)"
+      },
+      {
         "command": "teachme.progress",
         "title": "Show progress",
         "category": "Teach Me",
@@ -57,6 +63,11 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "teachme.dashboard",
+          "when": "view == teachme.lesson",
+          "group": "navigation"
+        },
         {
           "command": "teachme.progress",
           "when": "view == teachme.lesson",

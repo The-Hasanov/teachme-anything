@@ -151,6 +151,16 @@ async function run() {
         assert.ok(vscode.window.terminals.some(t => t.name === 'Teach Me' && t.creationOptions.cwd?.fsPath?.toLowerCase() === cwd.toLowerCase()), 'no Teach Me terminal in the practice folder');
     });
 
+    await check('the dashboard opens once as an editor tab, and a second open reuses it', async () => {
+        const dashboards = () => vscode.window.tabGroups.all.flatMap(g => g.tabs).filter(t => t.input instanceof vscode.TabInputWebview && /teachme\.dashboard/.test(t.input.viewType));
+        await vscode.commands.executeCommand('teachme.dashboard');
+        await until(() => dashboards().length === 1);
+        await vscode.commands.executeCommand('teachme.dashboard');
+        await sleep(300);
+        assert.strictEqual(dashboards().length, 1);
+        await vscode.window.tabGroups.close(dashboards());
+    });
+
     await check('the view and the lesson surface are in the secondary side bar, not an editor tab', async () => {
         const tabs = vscode.window.tabGroups.all.flatMap(g => g.tabs);
         assert.ok(!tabs.some(t => t.input instanceof vscode.TabInputWebview), 'no webview tab');

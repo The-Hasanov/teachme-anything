@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import * as git from '../courses/git'
-import { apply, checked, current, initial, press, replay, screen, snapshot, taught, withProject, level } from '../hooks/engine/engine'
+import { apply, checked, current, dashboard, initial, press, replay, screen, snapshot, taught, withProject, level } from '../hooks/engine/engine'
 import type { Ctx, Out } from '../hooks/engine/engine'
 import { skillState } from '../hooks/engine/mastery'
 import { stats } from '../hooks/engine/stats'
@@ -342,6 +342,26 @@ test('#18 a lesson whose segment is missing says why and offers Write it now, wh
   Object.assign(l.c, { preparing: true, prepSince: l.c.now - 5_000, prepError: undefined })
   expect(screen(l.c)).toMatchObject({ actions: [], result: { tone: 'wait', text: expect.stringMatching(/5s so far\.$/) } })
   expect(press(l.c, { action: 'retry' }).effects).toEqual([])
+})
+
+test('the dashboard path: lessons done, the current one with its step, the next one being written or failed', () => {
+  const l = learner()
+  l.toLesson()
+  const steps = git.branches1.steps.filter(x => !x.drill).length
+  expect(dashboard(l.c)).toEqual({
+    title: git.course.subject, goal: git.course.goal,
+    overall: { label: '0 of 2 lessons', done: 0, total: 2 },
+    phases: [
+      { title: 'Branches', mark: 'now', done: 0, total: 1, lessons: [{ title: 'Branches', status: 'now', steps: `1 of ${steps} steps` }] },
+      { title: 'Merging', mark: 'todo', done: 0, total: 1, lessons: [{ title: 'Not written yet', status: 'todo' }] },
+    ],
+  })
+  l.take({ events: [{ ts: l.c.now, type: 'stage', stage: 'recap' }], effects: [] })
+  l.c.preparing = true
+  expect(dashboard(l.c)?.phases.map(p => [p.mark, p.lessons[0]!.status])).toEqual([['ok', 'done'], ['now', 'writing']])
+  expect(dashboard(l.c)?.overall).toEqual({ label: '1 of 2 lessons', done: 1, total: 2 })
+  Object.assign(l.c, { preparing: false, prepError: 'cargo check failed' })
+  expect(dashboard(l.c)?.phases[1]?.lessons[0]?.status).toBe('failed')
 })
 
 test('"I don\'t know" teaches the idea, brings the skill back, and is neither right nor wrong; the tutor sees the step', () => {

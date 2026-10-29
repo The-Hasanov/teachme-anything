@@ -64,7 +64,7 @@ function startChannel({ folders, onView, dir = path.join(os.homedir(), '.teachme
             try {
                 const m = JSON.parse(body);
                 json(res, 204);
-                onView(m.screen, m.layout);
+                onView(m.screen, m.layout, m.dashboard);
             } catch {
                 json(res, 400, { error: 'bad json' });
             }
