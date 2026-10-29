@@ -10,15 +10,17 @@ description: >
 
 Run the checks in order and stop at the first failure. Then fix it: say in one line what you will run, run it, and
 run the failed check again. Installing software or changing PATH or a shell profile needs the learner's yes, so
-ask first. A fix only the learner can do (reload a window, press a button) is named in one line. Never edit
-`.teachme/` or `practice/`. Run all checks only if the learner asked for a full check, then report each as ✓ or ✗
-in one line.
+ask first. A fix only the learner can do (reload a window, press a button) is named in one line. A fix that
+changes a file in `.teachme/` goes to the `teachme-anything:doctor` agent: start it with the failed check and what
+you found. Only that agent may write there, and it backs each file up first. Never edit `practice/`. Run all
+checks only if the learner asked for a full check, then report each as ✓ or ✗ in one line.
 
 1. **Course in this folder.** Check that `.teachme/course.json` exists and parses as JSON.
    ✗ no file: there is no course here. Say "teach me <subject>" in this folder, or open the folder that has one.
    ✗ does not parse: name the file and the parse error.
 2. **Lessons load.** Every file in `.teachme/scripts/*.json` parses as JSON with `"format": "teachme.script/1"`.
    ✗ name the file. A lesson that fails validation is skipped without notice, so the course looks shorter than it is.
+   Hand the file to the doctor agent: it repairs broken JSON, or sets an invalid lesson aside to be written again.
 3. **Setup tools.** Call `mcp__teachme-anything__recheck_setup`: it runs the setup checks in the engine.
    ✗ a tool: install it, or if your shell finds it but the engine does not, it is missing from the PATH Claude
    Code started with: link it into a folder on that PATH (`~/.local/bin`) or restart Claude Code from a new

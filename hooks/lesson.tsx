@@ -598,7 +598,7 @@ export async function lessonRegister($: EngineInterface) {
     .catch(err => $.ui.log(`teachme: author agent: ${err}`, { to: 'debug' }))
   await $.agent.register({ name: 'relay', description: 'Teach Me: starts the author or the doctor.', prompt: 'Reply OK, nothing else.', tools: [], model: 'haiku' })
     .catch(err => $.ui.log(`teachme: relay agent: ${err}`, { to: 'debug' }))
-  await $.agent.register({ name: 'doctor', description: 'Finds why a Teach Me setup item fails on this machine and fixes it.', prompt: DOCTOR_PROMPT, tools: ['Bash', 'Read', 'Glob', 'Grep', TOOL('recheck_setup')], model: 'sonnet' })
+  await $.agent.register({ name: 'doctor', description: 'Finds why Teach Me or one of its setup items fails on this machine and fixes it. The only agent allowed to repair Teach Me files in .teachme/.', prompt: DOCTOR_PROMPT, tools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', TOOL('recheck_setup'), TOOL('snapshot')], model: 'sonnet' })
     .catch(err => $.ui.log(`teachme: doctor agent: ${err}`, { to: 'debug' }))
 }
 
@@ -631,12 +631,27 @@ async function migrateMvp($: EngineInterface, root: string) {
   await prepare($, '', phase.segments[0])
 }
 
-export function lessonGuard(tool: string, input: { file_path?: string; notebook_path?: string; command?: string }): string | undefined {
+const LIVE = ['pending', 'running', 'waiting', 'idle']
+
+export async function isDoctor($: EngineInterface, agentId: string | undefined) {
+  if (!agentId) return false
+  const agent = await $.agent.list().then(all => all.find(a => a.id === agentId), () => undefined)
+  return agent?.type === `${PLUGIN}:doctor` && LIVE.includes(agent.status)
+}
+const LEARNER_HISTORY = /\.teachme[\\/](log[\\/]|metrics)/
+const BY_DOCTOR = ' The teachme-anything:doctor agent repairs broken Teach Me files.'
+
+const writesTeachme = (command: string) =>
+  /\.teachme[\\/]/.test(command) && /(>>?\s*['"]?[^\s'"]*\.teachme[\\/]|\brm\b|\bmv\b|\bsed\s+-i|\btee\b)/.test(command)
+
+export function lessonGuard(tool: string, input: { file_path?: string; notebook_path?: string; command?: string }, isDoctor = false): string | undefined {
   const path = (input.file_path ?? input.notebook_path ?? '').replace(/\\/g, '/')
+  const command = input.command ?? ''
   const isEdit = /^(Edit|Write|NotebookEdit)$/.test(tool)
-  if (isEdit && /(^|\/)\.teachme\//.test(path)) return 'Teach Me state is written by the engine only: use its tools (snapshot, submit_segment).'
+  const touchesTeachme = isEdit ? /(^|\/)\.teachme\//.test(path) : tool === 'Bash' && writesTeachme(command)
+  if (touchesTeachme && isDoctor && LEARNER_HISTORY.test(isEdit ? path : command)) return "The learner's history (.teachme/log/, metrics) is never changed, not even to repair it."
+  if (touchesTeachme && !isDoctor) return isEdit ? `Teach Me state is written by the engine only: use its tools (snapshot, submit_segment).${BY_DOCTOR}` : `Teach Me state is written by the engine only.${BY_DOCTOR}`
   if (isEdit && sess && /(^|\/)practice\//.test(path)) return "That folder is the learner's practice work: the tutor never edits it."
-  if (tool === 'Bash' && /\.teachme[\\/]/.test(input.command ?? '') && /(>>?\s*['"]?[^\s'"]*\.teachme[\\/]|\brm\b|\bmv\b|\bsed\s+-i|\btee\b)/.test(input.command ?? '')) return 'Teach Me state is written by the engine only.'
   return undefined
 }
 

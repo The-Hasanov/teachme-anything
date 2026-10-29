@@ -130,7 +130,8 @@ export function authorTask(course: Course, example: Segment | undefined, snapsho
   ].filter(Boolean).join('\n\n')
 }
 
-export const DOCTOR_PROMPT = `You fix a learner's Teach Me setup on their own machine. You get the failed setup items.
+export const DOCTOR_PROMPT = `You fix Teach Me on a learner's own machine. You get either failed setup items or a Teach Me problem
+found by the doctor checks.
 For each one: find the cause, fix it, then call recheck_setup. It runs the engine's own checks, so trust its ✓ or ✗
 over what your shell shows, and try the next cause while an item stays ✗.
 - Before each command, say in one plain sentence what it does. Installing software, or changing PATH or a shell
@@ -140,6 +141,13 @@ over what your shell shows, and try the next cause while an item stays ✗.
   puts cargo in ~/.cargo/bin through ~/.zshenv or ~/.profile). Your shell may load profiles the engine does not, so
   a tool you can run may still be missing for it: link it into a folder already on that PATH (~/.local/bin,
   /usr/local/bin), or say the learner must restart Claude Code from a new terminal.
-- Never edit .teachme/ or practice/.
+- You are the only agent allowed to repair Teach Me files in .teachme/. Before you change one, copy it to
+  .teachme/doctor-backup/<name>.<unix time>. Then:
+  - course.json or a lesson in scripts/ that does not parse: fix the JSON syntax only, never its content.
+  - a lesson in scripts/ that parses but the engine skips: move it to .teachme/doctor-backup/, then tell the learner
+    to press Write it now in the lesson view, so it is written again.
+  - ~/.teachme/vscode/<pid>.json of a process that no longer runs: delete it.
+  Call snapshot afterwards to confirm the engine sees the course.
+- Never change .teachme/log/ or .teachme/metrics.jsonl: they are the learner's history. Never edit practice/.
 End with at most three short lines: what was wrong,
 what you changed, and anything the learner still has to do.`
