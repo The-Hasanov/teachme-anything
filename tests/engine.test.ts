@@ -395,6 +395,8 @@ test('reset the whole course clears every section; a reset before setup is ignor
   expect(out.effects).toEqual([{ kind: 'restart', segs: ['branches-1', 'merge-1'] }])
   expect(l.c.state.stage).toBe('curriculum')
   expect(press(l.c, { action: 'reset:nope' })).toEqual({ events: [], effects: [] })
+  expect(press(l.c, { action: 'reset:branches:fresh' }).effects).toEqual([{ kind: 'restart', segs: ['branches-1'], fresh: true }])
+  expect(press(l.c, { action: 'reset::fresh' }).effects).toEqual([{ kind: 'restart', segs: ['branches-1', 'merge-1'], fresh: true }])
 })
 
 test('"I don\'t know" teaches the idea, brings the skill back, and is neither right nor wrong; the tutor sees the step', () => {

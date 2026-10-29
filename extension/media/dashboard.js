@@ -17,6 +17,7 @@
   function header(d) {
     const p = pct(d.overall.done, d.overall.total);
     return `<header class="hero">
+      <div class="badge" aria-hidden="true">${icon('mortar-board')}</div>
       <div class="hero-text"><h1>${esc(d.title)}</h1><p class="goal">${esc(d.goal)}</p></div>
       <div class="ring" data-p="${p}"><span>${p}%</span></div>
     </header>
@@ -58,7 +59,7 @@
       </article>
       <article class="card danger">
         <span class="label">Start over</span>
-        <p>Clears every answer, hint and review for the course. Your practice files are backed up first.</p>
+        <p>Clears every answer, hint and review for the course. Your practice files are backed up first. You can also have every lesson written again.</p>
         <div class="actions"><button class="btn warn" data-reset="" data-title="${esc(state.data?.title ?? 'the course')}" ${up ? '' : 'disabled'}>${icon('discard')} Reset the whole course</button></div>
       </article>
     </section>`;

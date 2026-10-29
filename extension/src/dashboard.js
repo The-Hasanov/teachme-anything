@@ -3,6 +3,8 @@ const vscode = require("vscode");
 const crypto = require("crypto");
 
 const VIEW_TYPE = 'teachme.dashboard';
+const RESET = 'Reset';
+const RESET_FRESH = 'Reset and write new lessons';
 
 function registerDashboard(context, layout, channel) {
     const media = vscode.Uri.joinPath(context.extensionUri, 'media');
@@ -21,16 +23,16 @@ function registerDashboard(context, layout, channel) {
     };
 
     const confirmReset = async (phase, title) => {
-        const detail = 'Every answer, hint and review in it is cleared, and its practice files are backed up to <folder>.old-<time>, then written fresh. This cannot be undone.';
-        const pick = await vscode.window.showWarningMessage(`Reset your progress in ${title}?`, { modal: true, detail }, 'Reset');
-        if (pick === 'Reset') channel.push({ type: 'press', press: { action: phase ? `reset:${phase}` : 'reset' }, t: Date.now() });
+        const detail = 'Every answer, hint and review in it is cleared, and its practice files are backed up to <folder>.old-<time>. "Write new lessons" also sets the written lessons aside, so the questions, exercises and practice programs are written again from scratch. This cannot be undone.';
+        const pick = await vscode.window.showWarningMessage(`Reset your progress in ${title}?`, { modal: true, detail }, RESET, RESET_FRESH);
+        if (pick) channel.push({ type: 'press', press: { action: `reset:${phase ?? ''}${pick === RESET_FRESH ? ':fresh' : ''}` }, t: Date.now() });
     };
 
     const open = () => {
         const { panel: p, isNew } = layout.panel(VIEW_TYPE, 'Teach Me', { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [media, codicons] });
         panel = p;
         if (!isNew) return post();
-        p.iconPath = vscode.Uri.joinPath(media, 'teachme.svg');
+        p.iconPath = { light: vscode.Uri.joinPath(media, 'teachme-tab-light.svg'), dark: vscode.Uri.joinPath(media, 'teachme-tab-dark.svg') };
         p.webview.html = html(p.webview);
         p.webview.onDidReceiveMessage(m => {
             if (m.type === 'ready') post();

@@ -590,6 +590,58 @@ test('#25 a practice folder left by an older version of the lesson is stale; the
   expect(await isStaleScaffold(folder({ 'src/lib.rs': 'pub fn shout() {}\n' }), scaffold, learner)).toBe(true)
 })
 
+test('reset with new lessons: the written lessons are set aside, practice is rewritten later, and the author writes the first one again', async ($, on) => {
+  const { files, net, clock, calls } = world(on)
+  const { prompts, relays, relay, end } = agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Kubernetes' } as never)
+  expect([prompts(), relays]).toEqual([[], ['r1']])
+  await relay()
+  expect(prompts()[0]).toMatch(/teach me Kubernetes/)
+  const call = async (tool: string, input: object, agentId: string) =>
+    JSON.parse((await $.tool.call({ tool: `mcp__teachme-anything__${tool}`, ...input, agentId } as never)).result as string)
+  const course = {
+    format: 'teachme.course/1', id: 'k8s', subject: 'Kubernetes', goal: 'run an app on a cluster', intake: [],
+    skills: [{ id: 'pods', title: 'Pods', type: 'concept', prereqs: [], misconceptions: [] }],
+    phases: [{ id: 'basics', title: 'Pods', skills: ['pods'], segments: ['basics-1', 'basics-2'] }],
+    setup: [{ id: 'verify', title: 'Checked on your machine', adapter: 'verify', where: 'local' }],
+  }
+  const lesson = (id: string, title: string, uses?: string[]) => ({
+    format: 'teachme.script/1', id, title, skills: ['pods'],
+    steps: [
+      { id: `${id}-a`, kind: 'concept', skill: 'pods', difficulty: 1, title, body: 'A pod runs one or more containers together.' },
+      { id: `${id}-b`, kind: 'mcq', skill: 'pods', difficulty: 1, title: 'A pod', body: 'What does a pod run?', choices: [{ text: 'Containers', why: 'Right.' }, { text: 'Clusters', why: 'A cluster runs pods.' }], key: [0], ...(uses ? { uses } : {}) },
+    ],
+  })
+  expect(await call('submit_course', { course }, 'a1')).toMatchObject({ ok: true })
+  expect(await call('submit_segment', { segment: lesson('basics-1', 'Pods') }, 'a1')).toMatchObject({ ok: true })
+  await end('a1')
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  for (const key of ['choose-1', 'choose-2', 'choose-1', 'act-setup', 'act-continue', 'act-start']) await ui.press({ key })
+  expect([prompts().length, relays]).toEqual([1, ['r2']])
+  await relay()
+  expect(prompts()[1]).toMatch(/Write segment "basics-2"/)
+  expect(await call('submit_segment', { segment: lesson('basics-2', 'Pods again', ['pods']) }, 'a2')).toEqual({ ok: true, id: 'basics-2' })
+  await end('a2', 'Submitted basics-2.')
+  let release: ((r: Reply) => void) | undefined
+  let seq = 0
+  const reply = (events: unknown[]) => ({ status: 200, text: JSON.stringify({ boot: 'b1', last: seq, events }) })
+  files['C:/Users/learner/.teachme/vscode/7.json'] = JSON.stringify({ port: 7, token: 't', folders: [ROOT], pid: 7 })
+  net.fetch = url => url.includes('/lesson/view') ? { status: 200 } : url.includes('wait=0') ? reply([]) : new Promise<Reply>(r => { release = r })
+  await clock.advance(2000)
+  const send = async (action: string) => { seq++; release?.(reply([{ seq, type: 'press', press: { action }, t: 0 }])); await clock.advance(10) }
+
+  await send('reset::fresh')
+  expect(Object.keys(files).filter(f => f.includes('/.teachme/scripts-old/')).map(f => f.replace(/\.\d+\.json$/, '')).sort())
+    .toEqual([`${ROOT}/.teachme/scripts-old/basics-1`, `${ROOT}/.teachme/scripts-old/basics-2`])
+  expect(calls.runs.filter(r => r.includes(' del '))).toHaveLength(2)
+  expect(relays).toEqual(['r3'])
+  await relay()
+  expect(prompts().at(-1)).toMatch(/Write segment "basics-1"/)
+  await ui.unmount()
+})
+
 test('#10 a VS Code window driven by a newer session: this one stops drawing there and says so in its band', async ($, on) => {
   const { files, net, clock } = world(on)
   let status = 200

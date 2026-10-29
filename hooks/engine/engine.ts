@@ -356,7 +356,7 @@ export function press(c: Ctx, p: Press): Out {
     if (action === 'continue' && setupDone(c)) return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
     return NONE
   }
-  if (action?.startsWith('reset') && ['curriculum', 'recap', 'lesson'].includes(s.stage)) return reset(c, action.split(':')[1])
+  if (action?.startsWith('reset') && ['curriculum', 'recap', 'lesson'].includes(s.stage)) return reset(c, action.split(':')[1], action.split(':')[2] === 'fresh')
   if (s.stage === 'curriculum' || s.stage === 'recap') {
     if (action === 'start') {
       const go = resume(c)
@@ -417,7 +417,7 @@ function resume(c: Ctx): Out | undefined {
 }
 
 const missingSegment = (c: Ctx) => { const seg = c.state.pos?.seg; return seg && !c.segments[seg] ? seg : undefined }
-function reset(c: Ctx, phaseId?: string): Out {
+function reset(c: Ctx, phaseId?: string, fresh = false): Out {
   const course = c.course!
   const phases = phaseId ? course.phases.filter(p => p.id === phaseId) : course.phases
   if (!phases.length) return NONE
@@ -431,7 +431,7 @@ function reset(c: Ctx, phaseId?: string): Out {
     steps: segs.flatMap(id => c.segments[id]?.steps.map(x => x.id) ?? []),
     skills: [...new Set(phases.flatMap(p => p.skills))],
   }
-  return { events: [event, { ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [{ kind: 'restart', segs }] }
+  return { events: [event, { ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [{ kind: 'restart', segs, ...(fresh ? { fresh } : {}) }] }
 }
 
 const nextSegment = (c: Ctx, seg: string) => { const order = c.course ? segmentOrder(c.course) : []; return order[order.indexOf(seg) + 1] }

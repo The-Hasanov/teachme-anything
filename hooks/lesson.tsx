@@ -13,7 +13,7 @@ import type { Build, Course, Effect, LogEvent, Line, Phase, Press, ProjectPick, 
 import { skillState } from './engine/mastery'
 import { migrate } from './engine/migrate'
 import { milestoneErrors, untaught, validateCourse, validateProjectPhase, validateSegment } from './engine/schema'
-import { MANUAL, backUpScaffold, installPlan, isStaleScaffold, isTool, output, probeEnv, runCommand, runProbes, scaffold } from './host/adapters'
+import { MANUAL, backUpScaffold, installPlan, isStaleScaffold, isTool, output, probeEnv, removeLesson, runCommand, runProbes, scaffold } from './host/adapters'
 import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
 import { DIR, append, hasCourse, install, load, newLog, progressMarkdown } from './host/store'
@@ -54,6 +54,7 @@ type Session = {
   lastProbes?: { id: string; ok: boolean; got: string }[]
   vscode?: VsCode
   reveal?: Reveal
+  rewrite?: Set<string>
   // Ask: the prompt sent to the agent for this step, the turn that answers it, and its answer
   asking?: { step: string; prompt: string; question?: string; turn?: string; answer?: string }
 }
@@ -193,7 +194,7 @@ async function run($: EngineInterface, fx: Effect) {
     if (fx.kind === 'prepare') return prepare($, fx.after, fx.seg)
     if (fx.kind === 'remedy') return remedy($, fx.tag, fx.skill)
     if (fx.kind === 'ask') return ask($, fx.question)
-    if (fx.kind === 'restart') return restartPractice($, fx.segs)
+    if (fx.kind === 'restart') return restartPractice($, fx.segs, fx.fresh)
     throw new Error('no handler for this effect')
   } catch (err) {
     s.busy = undefined
@@ -233,21 +234,35 @@ async function ensurePractice($: EngineInterface, rel: string, segId?: string) {
   await refresh($, { op: 'terminal', cwd: dir })
 }
 
-async function restartPractice($: EngineInterface, segs: readonly string[]) {
+async function restartPractice($: EngineInterface, segs: readonly string[], fresh = false) {
   const s = sess!
   const stamp = await $.clock.now()
   for (const id of segs) {
     const seg = s.segments[id]
-    if (!seg?.practice || inProject(s, id)) continue
-    const dir = `${s.root}/${seg.practice.dir}`
-    if (await $.fs.exists(dir)) await backUpScaffold($, dir, seg.practice.scaffold, `${dir}.old-${stamp}`)
-    await scaffold($, dir, seg.practice.scaffold, s.os)
+    if (!seg || inProject(s, id)) continue
+    const dir = seg.practice && `${s.root}/${seg.practice.dir}`
+    if (dir && await $.fs.exists(dir)) await backUpScaffold($, dir, seg.practice!.scaffold, `${dir}.old-${stamp}`)
+    if (fresh) await setAside($, id, stamp, dir)
+    else if (dir) await scaffold($, dir, seg.practice!.scaffold, s.os)
   }
-  void metric($, { kind: 'reset', segs })
+  void metric($, { kind: 'reset', segs, fresh })
+  if (!fresh) return
+  await refresh($)
+  const order = s.course?.phases.flatMap(p => p.segments) ?? []
+  const first = order.find(id => segs.includes(id) && !s.segments[id])
+  if (first) await prepare($, order[order.indexOf(first) - 1] ?? '', first)
+}
+
+async function setAside($: EngineInterface, id: string, stamp: number, practiceDir?: string) {
+  const s = sess!
+  await $.fs.write(`${s.root}/${DIR}/scripts-old/${id}.${stamp}.json`, JSON.stringify(s.segments[id], null, 2) + '\n')
+  await removeLesson($, `${s.root}/${DIR}/scripts/${id}.json`, s.os)
+  delete s.segments[id]
+  if (practiceDir) (s.rewrite ??= new Set()).add(practiceDir)
 }
 
 async function needsScaffold($: EngineInterface, s: Session, dir: string, seg: Segment) {
-  if (!(await $.fs.exists(dir))) return true
+  if (!(await $.fs.exists(dir)) || s.rewrite?.delete(dir)) return true
   if (inProject(s, seg.id)) return false
   const learnerFiles = new Set(seg.steps.flatMap(x => x.open ? [x.open] : []))
   const read = (file: string) => $.fs.read(`${dir}/${file}`).catch(() => undefined)

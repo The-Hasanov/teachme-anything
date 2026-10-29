@@ -21,7 +21,10 @@ h2 { font-size: 1.05em; }
 p { margin: 0; }
 
 .hero { display: flex; align-items: center; justify-content: space-between; gap: var(--s5); margin-bottom: var(--s4); animation: rise 360ms var(--ease) both; }
+.hero-text { flex: 1; min-width: 0; }
 .goal { color: var(--muted); margin-top: var(--s1); }
+.badge { flex: none; width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.badge .codicon[class*='codicon-'] { font-size: 34px; }
 .ring { --p: 0; flex: none; width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--accent) calc(var(--p) * 1%), var(--track) 0); transition: --p 700ms var(--ease); }
 .ring::before { content: ''; grid-area: 1 / 1; width: 58px; height: 58px; border-radius: 50%; background: var(--vscode-editor-background); }
 .ring span { grid-area: 1 / 1; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -32,6 +35,8 @@ p { margin: 0; }
 .bar > i { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 70%, var(--right))); transition: width 700ms var(--ease); }
 
 .tabs { position: relative; display: flex; gap: var(--s1); margin: var(--s5) 0 var(--s4); border-bottom: 1px solid var(--border); }
+.tabs .codicon[class*='codicon-'], .phase-head .codicon[class*='codicon-'] { font-size: 18px; }
+.btn .codicon[class*='codicon-'] { font-size: 16px; }
 .tabs button { display: inline-flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4); border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; border-radius: 6px 6px 0 0; transition: color 160ms, background 160ms; }
 .tabs button:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
 .tabs button[aria-selected="true"] { color: var(--fg); }
@@ -93,7 +98,7 @@ p { margin: 0; }
 .btn.warn:hover:not(:disabled) { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 50%, var(--border)); }
 
 .empty { display: grid; place-items: center; gap: var(--s3); padding: 15vh 0; color: var(--muted); text-align: center; }
-.empty .codicon { font-size: 40px; }
+.empty .codicon[class*='codicon-'] { font-size: 40px; }
 
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }

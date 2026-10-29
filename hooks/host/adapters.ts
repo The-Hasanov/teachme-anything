@@ -100,6 +100,11 @@ export async function rmrf($: EngineInterface, dir: string, os: Os) {
   await run($, os === 'windows' ? ['cmd', '/d', '/c', 'rmdir', '/s', '/q', dir.replace(/\//g, '\\')] : ['rm', '-rf', dir])
 }
 
+export async function removeLesson($: EngineInterface, path: string, os: Os) {
+  if (!/\/\.teachme\/scripts\/[^/]+\.json$/.test(path)) throw new Error(`refusing to remove ${path}`)
+  await run($, os === 'windows' ? ['cmd', '/d', '/c', 'del', '/q', path.replace(/\//g, '\\')] : ['rm', '-f', path])
+}
+
 export async function runCommand($: EngineInterface, dir: string, cmd: readonly string[]): Promise<{ ok: boolean; out: string }> {
   if (cmd[0] === '@write') {
     const file = cmd[1] ?? ''
