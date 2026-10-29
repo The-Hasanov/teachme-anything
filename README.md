@@ -66,6 +66,8 @@ files in your course folder. Nothing is installed without your click, and the tu
 | Extension | `extension/` | the lesson view, the layout manager, the channel to the plugin |
 | Skills | `skills/` | progress, strengths and weaknesses on request in chat |
 
+Before a release, go through [docs/release-checklist.md](docs/release-checklist.md). `sh scripts/check.sh` runs every test in one go (`--quick` skips the extension):
+
 ```sh
 claude plugin validate .
 claude plugin test .                          # engine, schema, courses, pane
