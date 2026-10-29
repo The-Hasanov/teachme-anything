@@ -18,7 +18,7 @@ back from a new angle until it is fixed for good.
 
    ```sh
    cd extension && npm install && npm run package
-   code --install-extension teachme-anything-0.6.2.vsix
+   code --install-extension teachme-anything-0.6.3.vsix
    ```
 
 3. In an empty folder, tell Claude Code: **"teach me &lt;subject&gt;"**.
@@ -65,6 +65,8 @@ files in your course folder. Nothing is installed without your click, and the tu
 | Courses | `courses/` | the built-in courses, in the same format the author writes |
 | Extension | `extension/` | the lesson view, the layout manager, the channel to the plugin |
 | Skills | `skills/` | progress, strengths and weaknesses on request in chat |
+
+Run every test in one go with `sh scripts/check.sh` (`--quick` skips the extension). It runs:
 
 ```sh
 claude plugin validate .
