@@ -91,20 +91,22 @@
   const lines = (ls) => `<ul class="lines">${ls.map(l => `<li><span class="mark-${l.mark}">${icon(...MARK[l.mark])}</span><span>${esc(l.text)}</span>${l.detail ? `<span class="detail">${esc(l.detail)}</span>` : ''}</li>`).join('')}</ul>`;
   const chart = (c) => {
     const n = c.points.length, x = (i) => (8 + i * 190 / (n - 1)).toFixed(1), y = (v) => (54 - v * 48).toFixed(1);
-    const first = Math.round(100 * c.points[0]), last = Math.round(100 * c.points[n - 1]);
     const grid = [0, 0.5, 1].map(v => `<line class="grid" x1="8" x2="198" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="0" y="${(Number(y(v)) + 2).toFixed(1)}">${v * 100}</text>`).join('');
-    return `<figure class="chart"><svg viewBox="0 0 200 60" role="img" aria-label="${esc(c.label)}. ${first}% at first, ${last}% now.">${grid}<polyline points="${c.points.map((v, i) => `${x(i)},${y(v)}`).join(' ')}"/><circle cx="${x(n - 1)}" cy="${y(c.points[n - 1])}" r="2"/></svg><figcaption>${esc(c.label)} · first ${first}%, now ${last}%</figcaption></figure>`;
+    return `<figure class="chart"><svg viewBox="0 0 200 60" role="img" aria-label="${esc(c.label)}">${grid}<polyline points="${c.points.map((v, i) => `${x(i)},${y(v)}`).join(' ')}"/><circle cx="${x(n - 1)}" cy="${y(c.points[n - 1])}" r="2"/></svg><figcaption>${esc(c.label)}</figcaption></figure>`;
   };
 
   function draw(isNew) {
-    if (!connected && !screen) {
-      root.innerHTML = `<main><h1>Teach Me</h1><p class="offline">Open Claude Code in this folder and say <strong>teach me Git</strong>. Your lesson appears here.</p></main>`;
+    if (!connected) {
+      const place = screen?.progress?.label ?? screen?.title;
+      root.innerHTML = `<main class="k-offline"><h1>Teach Me</h1>${place
+        ? `<p>Your session ended. Your place is saved: <strong>${esc(place)}</strong>.</p><p class="offline">${icon('debug-disconnect')} Start Claude Code in this folder to continue where you left off.</p>`
+        : `<p class="offline">${icon('debug-disconnect')} Start Claude Code in this folder and say <strong>teach me &lt;subject&gt;</strong>. Your lesson appears here.</p>`}</main>`;
       return;
     }
     if (!screen) { root.innerHTML = '<main><p class="offline">Loading your lesson…</p></main>'; return; }
     const s = screen;
     const out = [];
-    if (s.progress) out.push(`<div class="progress"><span>${esc(s.progress.label)}</span><span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${s.progress.total}" aria-valuenow="${s.progress.done}"><i style="width:${Math.round(100 * s.progress.done / Math.max(1, s.progress.total))}%"></i></span></div>`);
+    if (s.progress) out.push(`<div class="progress"><span>${esc(s.progress.label)}</span><span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${s.progress.total}" aria-valuenow="${s.progress.done}"><i data-w="${Math.round(100 * s.progress.done / Math.max(1, s.progress.total))}"></i></span></div>`);
     out.push(`<h1 tabindex="-1">${esc(s.title)}</h1>`);
     if (s.body) out.push(md(s.body));
     if (s.compare) out.push(`<div class="compare">${md(s.compare.text)}<p class="stops"><strong>Where it stops:</strong> ${esc(s.compare.stops)}</p></div>`);
@@ -135,15 +137,14 @@
     const primary = s.actions.filter(a => a.primary), quiet = s.actions.filter(a => !a.primary);
     if (s.actions.length) out.push(`<div class="actions">${primary.map(a => `<button class="btn" data-action="${esc(a.id)}">${esc(a.label)}${a.key && KEY[a.key] ? `<span class="kbd">${KEY[a.key]}</span>` : ''}</button>`).join('')}${quiet.map(a => `<button class="link" data-action="${esc(a.id)}" ${a.key && KEY[a.key] ? `aria-keyshortcuts="${KEY[a.key]}"` : ''}>${esc(a.label)}</button>`).join('')}</div>`);
     if (s.more) out.push(`<details class="more"><summary>More</summary>${md(s.more)}</details>`);
-    if (!connected) out.push(`<p class="offline">${icon('debug-disconnect')} Claude Code is not connected. Open it in this folder to continue.</p>`);
     if (showKeys) out.push(`<p class="keys">1–8 choose · Enter primary · H hint · M more · A ask · B back to step · ? keys</p>`);
     const y = window.scrollY;
     root.innerHTML = `<main class="k-${esc(s.kind)}${isNew ? ' enter' : ''}">${out.join('')}</main>`;
     if (!isNew) window.scrollTo(0, y);
+    root.querySelectorAll('.bar > i[data-w]').forEach(f => { f.style.width = `${f.dataset.w}%`; });
     root.querySelectorAll('[data-action]').forEach(b => b.onclick = () => send({ action: b.dataset.action }));
     root.querySelectorAll('[data-choose]').forEach(b => b.onclick = () => send({ choose: Number(b.dataset.choose) }));
     root.querySelectorAll('form.other').forEach(f => f.onsubmit = (e) => { e.preventDefault(); const text = f.querySelector('input').value.trim(); if (text) send({ text }); });
-    if (!connected) root.querySelectorAll('button').forEach(b => { b.disabled = true; });
   }
 
   window.addEventListener('message', (ev) => {

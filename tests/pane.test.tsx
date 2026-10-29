@@ -232,7 +232,10 @@ function machine(files: Record<string, string>): Run {
 test('a whole Big-O lesson and a Python code task in the terminal pane, buttons only', async ($, on) => {
   const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
   const press = async (ui: Awaited<ReturnType<typeof $.ui.mount>>, ...keys: string[]) => { for (const key of keys) await ui.press({ key }) }
-  const title = async (ui: Awaited<ReturnType<typeof $.ui.mount>>) => (await ui.findAll({ type: 'Text' })).find(t => /^[A-Z]/.test(t.text) && !/of \d|░|▓/.test(t.text))?.text
+  const title = async (ui: Awaited<ReturnType<typeof $.ui.mount>>) => {
+    const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+    return texts[texts.indexOf('▎') + 1]
+  }
 
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
   await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Big-O' } as never)
@@ -256,7 +259,8 @@ test('a whole Big-O lesson and a Python code task in the terminal pane, buttons 
   expect(shown).toContain('Your progress')
   expect(shown).toEqual(expect.arrayContaining(['right', 'right first try', 'answers']))
   expect(shown.find(t => /^\d+%$/.test(t))).toBeDefined()
-  expect(shown.find(t => /^[▁▂▃▄▅▆▇█]{2,}$/.test(t))).toBeDefined()
+  expect(shown).toEqual(expect.arrayContaining(['100 ┤', '  0 ┤']))
+  expect(shown.filter(t => /^[ ▁▂▃▄▅▆▇█]+$/.test(t) && /█/.test(t)).length).toBeGreaterThan(1)
   expect(shown).toEqual(expect.arrayContaining(['Strengths', 'To work on', 'Skills']))
   await press(ui, 'act-back')
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text)).toContain('Today')

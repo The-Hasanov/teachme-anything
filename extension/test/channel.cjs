@@ -61,6 +61,13 @@ const raw = (port, opts) => new Promise((resolve, reject) => {
     assert.deepStrictEqual(idle.events, []);
     assert.ok(performance.now() - t >= 190);
 
+    const quit = new AbortController();
+    fetch(`${base}/lesson/events?after=${after}&wait=20000`, { headers: auth, signal: quit.signal }).catch(() => undefined);
+    await new Promise(r => setTimeout(r, 20));
+    quit.abort();
+    await new Promise(r => setTimeout(r, 20));
+    assert.ok(!ch.isConnected(), 'a session that quits mid-poll is disconnected at once');
+
     // #10: two Claude Code sessions in one folder. The newest drives the window; the older one is turned away, its
     // waiting poll is cut off, and it can neither take presses nor draw.
     const as = (id, started) => ({ ...auth, 'x-teachme-session': id, 'x-teachme-started': String(started) });

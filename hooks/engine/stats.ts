@@ -37,14 +37,14 @@ export function stats(course: Course, s: LearnerState, now: number) {
     const idk = Object.values(s.idk).filter(x => x === k.id).length
     return { id: k.id, title: k.title, state: skillState(s, k.id, now), answers: mine.length, accuracy: ratio(mine.filter(e => e.ok).length, mine.length), idk }
   })
-  const strengths = skills
-    .filter(k => k.answers >= 2 && (k.state === 'demonstrated' || k.state === 'mastered' || k.accuracy >= 0.8))
-    .sort((a, b) => b.accuracy - a.accuracy || b.answers - a.answers).slice(0, 3)
   const open = Object.values(s.weak).filter(w => w.status !== 'resolved').sort((a, b) => b.count - a.count)
+  const strengths = skills
+    .filter(k => k.answers >= 2 && (k.state === 'demonstrated' || k.state === 'mastered' || k.accuracy >= 0.8) && !open.some(w => w.skill === k.id))
+    .sort((a, b) => b.accuracy - a.accuracy || b.answers - a.answers).slice(0, 3)
   const weakSkills = skills.filter(k => k.answers >= 3 && k.accuracy < 0.6 && !open.some(w => w.skill === k.id))
   const weaknesses = [
     ...open.map(w => ({ text: weaknessText(course, w), detail: `${w.count}× wrong · ${w.status === 'recheck' ? 'fixed once, re-checked later' : 'practising now'}` })),
-    ...weakSkills.map(k => ({ text: k.title, detail: `${Math.round(100 * k.accuracy)}% right of ${k.answers}` })),
+    ...weakSkills.map(k => ({ text: k.title, detail: `${Math.round(k.accuracy * k.answers)} of ${k.answers} right` })),
   ].slice(0, 5)
 
   return {

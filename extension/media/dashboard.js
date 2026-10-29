@@ -26,7 +26,7 @@
 
   function pathTab(d) {
     return `<section class="phases">${d.phases.map((p, i) => `
-      <article class="card phase ${p.mark}" style="--i:${i}">
+      <article class="card phase ${p.mark}" data-i="${i}">
         <div class="phase-head">${icon(PHASE_ICON[p.mark])}<h2>${esc(p.title)}</h2><span class="count">${p.done} of ${p.total} lessons</span>${p.mark === 'todo' ? '' : `<button class="ghost" data-reset="${esc(p.id)}" data-title="${esc(p.title)}" title="Reset ${esc(p.title)}" aria-label="Reset ${esc(p.title)}">${icon('discard')}</button>`}</div>
         ${bar(`phase-${i}`, p.done, p.total)}
         <ol class="lessons">${p.lessons.map(l => `
@@ -75,6 +75,7 @@
         <span class="indicator"></span>
       </nav>
       <main class="tab-body" data-tab="${tab}">${tab === 'path' ? pathTab(d) : controlTab(state.screen, state.up)}</main>`;
+    root.querySelectorAll('[data-i]').forEach(el => el.style.setProperty('--i', el.dataset.i));
     placeIndicator();
     animateBars();
     vscode.postMessage({ type: 'rendered', tab, text: root.innerText });

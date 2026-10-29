@@ -510,7 +510,7 @@ export function screen(c: Ctx): Screen {
     return {
       kind: 'welcome', title: course.subject, progress: overall(c),
       body: `Welcome back.\n\nYou stopped at: **${at.seg.title}** · step ${stepNumber(at.seg, at.index)}.${sofar}${due ? `\n\nFirst, ${due === 1 ? 'one thing' : `${due} things`} to keep sharp.` : ''}`,
-      actions: [act('continue', 'Continue', true, 'enter'), act('curriculum', 'Curriculum'), PROGRESS],
+      actions: [act('continue', 'Continue', true, 'enter'), act('curriculum', 'Path'), PROGRESS],
     }
   }
   if (s.stage === 'intake') {
@@ -545,7 +545,7 @@ export function screen(c: Ctx): Screen {
           mark: phaseDone(c, p.skills) ? 'ok' as const : (s.pos ? course.phases.findIndex(x => x.segments.includes(s.pos!.seg)) === i : i === 0) ? 'now' as const : 'todo' as const,
           text: p.title,
           detail: p.project ? `Project · ${p.segments.length} milestones` : p.skills.length
-            ? [`${p.skills.length} skills`, practiced ? `${practiced} practiced` : '', toSharpen ? `${toSharpen} to keep sharp` : ''].filter(Boolean).join(' · ')
+            ? [`${practiced} of ${p.skills.length} skills`, toSharpen ? `${toSharpen} to keep sharp` : ''].filter(Boolean).join(' · ')
             : 'Prepared when you get there',
         }
       }),
@@ -564,7 +564,7 @@ export function screen(c: Ctx): Screen {
         ...weak.slice(0, 3).map(t => ({ mark: 'todo' as const, text: `Keep sharp: ${t}` })),
       ],
       ...nextParts(c),
-      actions: [...nextActions(c, 'Next lesson'), nextActions(c, '').length ? act('curriculum', 'Curriculum') : act('curriculum', 'Curriculum', true, 'enter'), PROGRESS],
+      actions: [...nextActions(c, 'Next lesson'), nextActions(c, '').length ? act('curriculum', 'Path') : act('curriculum', 'Path', true, 'enter'), PROGRESS],
     }
   }
   const at = current(c)
@@ -749,13 +749,15 @@ export function withProject(course: Course, s: LearnerState, phase: Phase): Phas
     ...course.phases.slice(i + 1),
   ]
 }
-const SKILL_MARK = { 'not-started': 'todo', learning: 'now', practiced: 'now', demonstrated: 'ok', mastered: 'ok' } as const
+const SKILL_MARK = { 'not-started': 'todo', learning: 'now', practiced: 'ok', demonstrated: 'ok', mastered: 'ok' } as const
+const stateText = (state: string) => state.replace('-', ' ')
 
 function progressScreen(c: Ctx): Screen {
   const st = stats(c.course!, c.state, c.now)
   const base = { kind: 'progress' as const, title: 'Your progress', progress: overall(c), actions: [act('back', 'Back', true, 'b')] }
   if (!st.answers) return { ...base, body: 'No answers yet. Your accuracy, learning curve, strengths and weaknesses show here after your first questions.' }
-  const right = (k: { accuracy: number; answers: number }) => `${pct(k.accuracy)} right of ${k.answers}`
+  const right = (k: { accuracy: number; answers: number }) => `${Math.round(k.accuracy * k.answers)} of ${k.answers} right`
+  const lowest = Math.min(...st.curve), latest = st.curve.at(-1) ?? 0
   return {
     ...base,
     tiles: [
@@ -766,11 +768,11 @@ function progressScreen(c: Ctx): Screen {
       ...(st.medianSecs !== undefined ? [{ label: 'median time', value: `${st.medianSecs} s` }] : []),
       st.streak > 1 ? { label: 'days in a row', value: String(st.streak) } : { label: st.days === 1 ? 'day active' : 'days active', value: String(st.days) },
     ],
-    ...(st.curve.length >= 2 ? { chart: { label: `Learning curve: share right over your last ${WINDOW} answers, first to latest`, points: st.curve } } : {}),
+    ...(st.curve.length >= 2 ? { chart: { label: `Learning curve: share right over your last ${WINDOW} answers · lowest ${pct(lowest)}, now ${pct(latest)}`, points: st.curve } } : {}),
     groups: [
-      { title: 'Strengths', lines: st.strengths.length ? st.strengths.map(k => ({ mark: 'ok' as const, text: k.title, detail: `${right(k)} · ${k.state}` })) : [{ mark: 'todo' as const, text: 'Shown after a few right answers on one skill' }] },
+      { title: 'Strengths', lines: st.strengths.length ? st.strengths.map(k => ({ mark: 'ok' as const, text: k.title, detail: `${right(k)} · ${stateText(k.state)}` })) : [{ mark: 'todo' as const, text: 'Shown after a few right answers on one skill' }] },
       { title: 'To work on', lines: st.weaknesses.length ? st.weaknesses.map(w => ({ mark: 'fail' as const, text: w.text, detail: w.detail })) : [{ mark: 'ok' as const, text: 'Nothing open' }] },
-      { title: 'Skills', lines: st.skills.map(k => ({ mark: SKILL_MARK[k.state], text: k.title, detail: [k.answers ? right(k) : '', k.state, k.idk ? `${k.idk}× "I don't know"` : ''].filter(Boolean).join(' · ') })) },
+      { title: 'Skills', lines: st.skills.map(k => ({ mark: SKILL_MARK[k.state], text: k.title, detail: [k.answers ? right(k) : '', stateText(k.state), k.idk ? `${k.idk}× "I don't know"` : ''].filter(Boolean).join(' · ') })) },
     ],
   }
 }
@@ -806,7 +808,7 @@ const stepNumber = (seg: Segment, index: number) => seg.steps.slice(0, index + 1
 function overall(c: Ctx) {
   const skills = c.course?.skills ?? []
   const done = skills.filter(k => ['practiced', 'demonstrated', 'mastered'].includes(skillState(c.state, k.id, c.now))).length
-  return { label: `${done}/${skills.length} skills`, done, total: skills.length }
+  return { label: `${done} of ${skills.length} skills`, done, total: skills.length }
 }
 
 const phaseDone = (c: Ctx, skills: string[]) =>
