@@ -5,6 +5,7 @@ import * as python from '../courses/python'
 import { apply, press, replay, screen } from '../hooks/engine/engine'
 import type { Ctx } from '../hooks/engine/engine'
 import type { Course, Press, Screen, Segment } from '../hooks/engine/types'
+import { isStaleScaffold, judgeProbe } from '../hooks/host/adapters'
 import { lessonGuard } from '../hooks/lesson'
 
 const ROOT = 'C:/learn'
@@ -568,6 +569,25 @@ test('Open in VS Code in the terminal pane launches VS Code on the folder, then 
   const desktop = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await desktop.find({ type: 'Button', text: 'Open in VS Code' })).toBeUndefined()
   await desktop.unmount()
+})
+
+test('#25 a check whose test filter matches no test fails, and says why', () => {
+  const cargo = (passed: number, filtered: number) => `running ${passed} tests\ntest result: ok. ${passed} passed; 0 failed; 0 ignored; 0 measured; ${filtered} filtered out; finished in 0.00s`
+  const probe = { id: 'tests', argv: ['cargo', 'test', '-q', '--test', 'memory', 'shout'], expect: { exitCode: 0 } }
+  const ran = (stdout: string) => judgeProbe(probe, { exitCode: 0, stdout, stderr: '' })
+  expect(ran(`${cargo(0, 0)}\n\n${cargo(0, 4)}`)).toEqual({ id: 'tests', ok: false, got: 'the check ran no tests: the test it names is missing' })
+  expect(ran(`${cargo(0, 0)}\n\n${cargo(2, 2)}`)).toMatchObject({ id: 'tests', ok: true })
+  expect(ran('ok  \texample.com/m\t0.1s [no tests to run]').ok).toBe(false)
+  expect(judgeProbe({ id: 'out', argv: ['python', 'x.py'], expect: { equals: '3' } }, { exitCode: 0, stdout: '3\n', stderr: '' }).ok).toBe(true)
+})
+
+test('#25 a practice folder left by an older version of the lesson is stale; the learner\'s own file does not count', async () => {
+  const scaffold = [['@write', 'src/lib.rs', 'pub fn shout() {}\n'], ['@write', 'tests/memory.rs', 'shout tests\n'], ['cargo', 'fetch']]
+  const folder = (files: Record<string, string>) => async (file: string) => files[file]
+  const learner = new Set(['src/lib.rs'])
+  expect(await isStaleScaffold(folder({ 'src/lib.rs': 'pub fn shout() { /* mine */ }\n', 'tests/memory.rs': 'shout tests\r\n' }), scaffold, learner)).toBe(false)
+  expect(await isStaleScaffold(folder({ 'src/lib.rs': 'pub fn char_count() {}\n', 'tests/memory.rs': 'char_count tests\n' }), scaffold, learner)).toBe(true)
+  expect(await isStaleScaffold(folder({ 'src/lib.rs': 'pub fn shout() {}\n' }), scaffold, learner)).toBe(true)
 })
 
 test('#10 a VS Code window driven by a newer session: this one stops drawing there and says so in its band', async ($, on) => {

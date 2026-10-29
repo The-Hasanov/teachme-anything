@@ -185,7 +185,7 @@ function enter(c: Ctx, seg: string, step: number, extra: { back?: { seg: string;
   const s = c.segments[seg]
   const events: LogEvent[] = [{ ts: c.now, type: 'enter', seg, step, ...extra }]
   const fresh = !!s?.practice?.adds && !c.state.added[seg]
-  const effects: Effect[] = s?.practice && ((step === 0 && !extra.back) || fresh) ? [{ kind: 'practice', dir: s.practice.dir, seg }] : []
+  const effects: Effect[] = s?.practice && ((step === 0 && !extra.back) || fresh || !!s.steps[step]?.check) ? [{ kind: 'practice', dir: s.practice.dir, seg }] : []
   const order = c.course ? segmentOrder(c.course) : []
   const next = order[order.indexOf(seg) + 1]
   const left = s ? s.steps.slice(step + 1).filter(x => !x.drill).length : 0

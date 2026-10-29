@@ -13,7 +13,7 @@ import type { Build, Course, Effect, LogEvent, Line, Phase, Press, ProjectPick, 
 import { skillState } from './engine/mastery'
 import { migrate } from './engine/migrate'
 import { milestoneErrors, untaught, validateCourse, validateProjectPhase, validateSegment } from './engine/schema'
-import { MANUAL, installPlan, isTool, output, probeEnv, runCommand, runProbes, scaffold } from './host/adapters'
+import { MANUAL, backUpScaffold, installPlan, isStaleScaffold, isTool, output, probeEnv, runCommand, runProbes, scaffold } from './host/adapters'
 import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
 import { DIR, append, hasCourse, install, load, newLog, progressMarkdown } from './host/store'
@@ -220,7 +220,7 @@ async function ensurePractice($: EngineInterface, rel: string, segId?: string) {
   const s = sess!
   const dir = `${s.root}/${rel}`
   const seg = (segId ? s.segments[segId] : undefined) ?? Object.values(s.segments).find(g => g.practice?.dir === rel)
-  if (seg?.practice && !(await $.fs.exists(dir))) await scaffold($, dir, seg.practice.scaffold, s.os)
+  if (seg?.practice && await needsScaffold($, s, dir, seg)) await scaffold($, dir, seg.practice.scaffold, s.os)
   // The system's part of a milestone: boilerplate, wiring and tests, written once into the learner's folder
   if (seg?.practice?.adds && !s.state.added[seg.id]) {
     const bad = await scaffold($, dir, seg.practice.adds, s.os)
@@ -228,6 +228,18 @@ async function ensurePractice($: EngineInterface, rel: string, segId?: string) {
     else await commit($, { events: [{ ts: await $.clock.now(), type: 'added', seg: seg.id }], effects: [] })
   }
   await refresh($, { op: 'terminal', cwd: dir })
+}
+
+async function needsScaffold($: EngineInterface, s: Session, dir: string, seg: Segment) {
+  if (!(await $.fs.exists(dir))) return true
+  if (inProject(s, seg.id)) return false
+  const learnerFiles = new Set(seg.steps.flatMap(x => x.open ? [x.open] : []))
+  const read = (file: string) => $.fs.read(`${dir}/${file}`).catch(() => undefined)
+  if (!(await isStaleScaffold(read, seg.practice!.scaffold, learnerFiles))) return false
+  const backup = `${dir}.old-${await $.clock.now()}`
+  await backUpScaffold($, dir, seg.practice!.scaffold, backup)
+  void metric($, { kind: 'practice-rewritten', seg: seg.id, backup })
+  return true
 }
 
 const inProject = (s: Session, segId: string) => !!s.course?.phases.some(p => p.project && p.segments.includes(segId))

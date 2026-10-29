@@ -128,7 +128,7 @@
       }).join('')}</div>`);
     }
     if (s.input) out.push(`<form class="other"><input type="text" maxlength="300" aria-label="${esc(s.input.placeholder)}" placeholder="${esc(s.input.placeholder)}"><button class="btn" type="submit">Send</button></form>`);
-    if (s.where) out.push(`<p class="where">${icon('terminal')} ${s.where.file ? `<code>${esc(s.where.file)}</code> is open in your editor; the Teach Me terminal is in` : 'The Teach Me terminal is in'} <code>${esc(s.where.dir)}</code></p>`);
+    if (s.where) out.push(`<p class="where">${icon('terminal')} ${s.where.file ? `<code>${esc(`${s.where.dir}/${s.where.file}`)}</code> is open in your editor; the Teach Me terminal is in` : 'The Teach Me terminal is in'} <code>${esc(s.where.dir)}</code></p>`);
     if (s.hint) out.push(`<div class="hint"><strong>Hint ${s.hint.level}.</strong> ${esc(s.hint.text)}</div>`);
     const r = s.result;
     out.push(`<div class="result ${r ? r.tone : ''}" role="status" aria-live="polite">${r ? `${icon(r.tone === 'right' ? 'pass' : r.tone === 'wrong' ? 'warning' : r.tone === 'wait' ? 'eye' : 'info')}<span>${md(r.text)}</span>` : ''}</div>`);

@@ -120,15 +120,42 @@ export async function scaffold($: EngineInterface, dir: string, cmds: readonly (
   return undefined
 }
 
+const NO_TESTS_RAN = 'the check ran no tests: the test it names is missing'
+
+const ranNoTests = (out: string) => {
+  const passed = [...out.matchAll(/test result: \w+\. (\d+) passed/g)].map(m => Number(m[1]))
+  return (passed.length > 0 && passed.every(n => n === 0)) || /no tests to run/.test(out)
+}
+
+export function judgeProbe(p: Probe, r: { exitCode: number; stdout: string; stderr: string }): ProbeResult {
+  const out = r.stdout.replace(/\r\n/g, '\n').trim()
+  if (ranNoTests(`${out}\n${r.stderr}`)) return { id: p.id, ok: false, got: NO_TESTS_RAN }
+  const got = out || r.stderr.trim().slice(-400) || (r.exitCode === 0 ? '' : `exit ${r.exitCode}`)
+  const e = p.expect
+  const ok = (e.exitCode === undefined ? (e.equals === undefined && e.matches === undefined ? r.exitCode === 0 : true) : r.exitCode === e.exitCode)
+    && (e.equals === undefined || out === e.equals)
+    && (e.matches === undefined || new RegExp(e.matches, 'm').test(out))
+  return { id: p.id, ok, got }
+}
+
 export async function runProbes($: EngineInterface, dir: string, probes: readonly Probe[]): Promise<ProbeResult[]> {
-  return Promise.all(probes.map(async p => {
-    const r = await run($, p.argv, dir, BUILD_MS)
-    const out = r.stdout.replace(/\r\n/g, '\n').trim()
-    const got = out || r.stderr.trim().slice(-400) || (r.exitCode === 0 ? '' : `exit ${r.exitCode}`)
-    const e = p.expect
-    const ok = (e.exitCode === undefined ? (e.equals === undefined && e.matches === undefined ? r.exitCode === 0 : true) : r.exitCode === e.exitCode)
-      && (e.equals === undefined || out === e.equals)
-      && (e.matches === undefined || new RegExp(e.matches, 'm').test(out))
-    return { id: p.id, ok, got }
-  }))
+  return Promise.all(probes.map(async p => judgeProbe(p, await run($, p.argv, dir, BUILD_MS))))
+}
+
+const writesOf = (cmds: readonly (readonly string[])[]) =>
+  new Map(cmds.filter(c => c[0] === '@write' && c[1]).map(c => [c[1]!, (c[2] ?? '').replace(/\r\n/g, '\n')]))
+
+export async function isStaleScaffold(read: (file: string) => Promise<string | undefined>, cmds: readonly (readonly string[])[], learnerFiles: ReadonlySet<string>) {
+  for (const [file, text] of writesOf(cmds)) {
+    if (learnerFiles.has(file)) continue
+    if ((await read(file))?.replace(/\r\n/g, '\n') !== text) return true
+  }
+  return false
+}
+
+export async function backUpScaffold($: EngineInterface, dir: string, cmds: readonly (readonly string[])[], to: string) {
+  for (const file of writesOf(cmds).keys()) {
+    const now = await $.fs.read(`${dir}/${file}`).catch(() => undefined)
+    if (now !== undefined) await $.fs.write(`${to}/${file}`, now)
+  }
 }
