@@ -78,7 +78,7 @@
   },
   "scripts": {
     "package": "vsce package",
-    "test": "node test/view.cjs && node test/channel.cjs && node test/layout-lint.cjs && node test/integration/run.cjs"
+    "test": "node test/view.cjs && node test/dashboard.cjs && node test/channel.cjs && node test/layout-lint.cjs && node test/integration/run.cjs"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.36"
