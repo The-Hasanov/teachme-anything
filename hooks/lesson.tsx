@@ -13,7 +13,7 @@ import type { Build, Course, Effect, LogEvent, Line, Phase, Press, ProjectPick, 
 import { skillState } from './engine/mastery'
 import { migrate } from './engine/migrate'
 import { milestoneErrors, untaught, validateCourse, validateProjectPhase, validateSegment } from './engine/schema'
-import { MANUAL, installPlan, isTool, probeEnv, runCommand, runProbes, scaffold } from './host/adapters'
+import { MANUAL, backUpScaffold, installPlan, isStaleScaffold, isTool, output, probeEnv, runCommand, runProbes, scaffold } from './host/adapters'
 import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
 import { DIR, append, hasCourse, install, load, newLog, progressMarkdown } from './host/store'
@@ -53,6 +53,7 @@ type Session = {
   build?: Build & { open: boolean; agent?: string }
   lastProbes?: { id: string; ok: boolean; got: string }[]
   vscode?: VsCode
+  reveal?: Reveal
   // Ask: the prompt sent to the agent for this step, the turn that answers it, and its answer
   asking?: { step: string; prompt: string; question?: string; turn?: string; answer?: string }
 }
@@ -77,8 +78,31 @@ const askedHere = (s: Session) => {
 }
 
 // One poller per folder: a second one would keep polling and dispatch every press twice
+type Reveal = Extract<LayoutOp, { op: 'reveal' }>
+
 const vsCodeFor = ($: EngineInterface, root: string) =>
-  sess?.vscode?.root === root ? sess.vscode : newVsCode(root, (p, t) => { void dispatch($, p, t) }, () => { void refresh($) })
+  sess?.vscode?.root === root ? sess.vscode : newVsCode(root, (p, t) => { void dispatch($, p, t) }, () => { void refresh($, takeReveal()) })
+
+const takeReveal = () => {
+  const reveal = sess?.reveal
+  if (sess) sess.reveal = undefined
+  return reveal
+}
+
+async function openInVsCode($: EngineInterface) {
+  const s = sess
+  if (!s) return
+  const at = current(await ctx($))
+  const dir = practiceDir(s, at?.seg)
+  const reveal: Reveal = { op: 'reveal', ...(dir ? { cwd: dir } : {}), ...(dir && at?.step.open ? { path: `${dir}/${at.step.open}` } : {}) }
+  if (s.vscode?.isUp) return refresh($, reveal)
+  s.reveal = reveal
+  const args = [s.root, ...(reveal.path ? [reveal.path] : [])]
+  const opened = await output($, s.root, s.os === 'windows' ? ['cmd', '/c', 'code', ...args] : ['code', ...args])
+  if (opened.ok) return
+  s.reveal = undefined
+  void $.ui.toast(`VS Code did not open (${opened.err || 'no code command'}). In VS Code, run "Shell Command: Install 'code' command in PATH".`)
+}
 
 const practiceDir = (s: Session, seg?: Segment) => seg?.practice ? `${s.root}/${seg.practice.dir}` : undefined
 
@@ -196,7 +220,7 @@ async function ensurePractice($: EngineInterface, rel: string, segId?: string) {
   const s = sess!
   const dir = `${s.root}/${rel}`
   const seg = (segId ? s.segments[segId] : undefined) ?? Object.values(s.segments).find(g => g.practice?.dir === rel)
-  if (seg?.practice && !(await $.fs.exists(dir))) await scaffold($, dir, seg.practice.scaffold, s.os)
+  if (seg?.practice && await needsScaffold($, s, dir, seg)) await scaffold($, dir, seg.practice.scaffold, s.os)
   // The system's part of a milestone: boilerplate, wiring and tests, written once into the learner's folder
   if (seg?.practice?.adds && !s.state.added[seg.id]) {
     const bad = await scaffold($, dir, seg.practice.adds, s.os)
@@ -204,6 +228,18 @@ async function ensurePractice($: EngineInterface, rel: string, segId?: string) {
     else await commit($, { events: [{ ts: await $.clock.now(), type: 'added', seg: seg.id }], effects: [] })
   }
   await refresh($, { op: 'terminal', cwd: dir })
+}
+
+async function needsScaffold($: EngineInterface, s: Session, dir: string, seg: Segment) {
+  if (!(await $.fs.exists(dir))) return true
+  if (inProject(s, seg.id)) return false
+  const learnerFiles = new Set(seg.steps.flatMap(x => x.open ? [x.open] : []))
+  const read = (file: string) => $.fs.read(`${dir}/${file}`).catch(() => undefined)
+  if (!(await isStaleScaffold(read, seg.practice!.scaffold, learnerFiles))) return false
+  const backup = `${dir}.old-${await $.clock.now()}`
+  await backUpScaffold($, dir, seg.practice!.scaffold, backup)
+  void metric($, { kind: 'practice-rewritten', seg: seg.id, backup })
+  return true
 }
 
 const inProject = (s: Session, segId: string) => !!s.course?.phases.some(p => p.project && p.segments.includes(segId))
@@ -856,11 +892,12 @@ export const registerLesson: Register = on => {
         {sc.input && Input && <Input key="intake-text" placeholder={sc.input.placeholder} submitLabel="send" onSubmit={(v: string) => { if (v.trim()) void dispatch($, { text: v }) }} />}
         {sc.hint && <Text color="suggestion">Hint {sc.hint.level}: {sc.hint.text}</Text>}
         {sc.result && sc.result.tone === 'info' && sc.kind === 'step' ? <Markdown text={sc.result.text} /> : sc.result && <Text color={tone(sc.result.tone)} italic={sc.result.tone === 'wait'}>{sc.result.tone === 'right' ? '✓ ' : sc.result.tone === 'wrong' ? '✗ ' : ''}{sc.result.text}</Text>}
-        {sc.actions.length > 0 && (
+        {(sc.actions.length > 0 || e.surface === 'terminal') && (
           <Box flexDirection="row" flexWrap="wrap" gap="sm">
             {sc.actions.map(a => (
               <Button key={`act-${a.id}`} variant={a.primary ? 'primary' : 'secondary'} {...(a.key && /^[a-z]$/.test(a.key) ? { hotkey: a.key } : {})} onPress={go({ action: a.id })}>{a.label}</Button>
             ))}
+            {e.surface === 'terminal' && <Button key="open-vscode" variant="secondary" hotkey="v" onPress={() => { void openInVsCode($) }}>Open in VS Code</Button>}
           </Box>
         )}
         {sc.more && <Text dimColor>{sc.more}</Text>}

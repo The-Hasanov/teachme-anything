@@ -2,7 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { Press, Screen } from '../engine/types'
 
-export type LayoutOp = { op: 'terminal'; cwd: string } | { op: 'reference'; path: string } | { op: 'practice'; path: string }
+export type LayoutOp = { op: 'terminal'; cwd: string } | { op: 'reference'; path: string } | { op: 'practice'; path: string } | { op: 'reveal'; cwd?: string; path?: string }
 type Endpoint = { url: string; token: string; pid: number }
 type Incoming = { seq: number; type: 'press'; press: Press; t: number } | { seq: number; type: 'ready' }
 
