@@ -61,7 +61,7 @@ function registerLessonView(context) {
         channel.push({ type: 'press', press: { action: 'progress' }, t: Date.now() });
     }));
     context.subscriptions.push(vscode.window.registerWebviewViewProvider('teachme.lesson', provider, { webviewOptions: { retainContextWhenHidden: true } }));
-    return { channel, layout, onScreen: (fn) => { watchers.add(fn); return () => watchers.delete(fn); } };
+    return { channel, layout, dashboard, onScreen: (fn) => { watchers.add(fn); return () => watchers.delete(fn); } };
 }
 
 module.exports = { registerLessonView };

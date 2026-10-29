@@ -6,7 +6,7 @@ const listeners = {};
 const posted = [];
 let saved;
 let click;
-const root = { innerHTML: '', querySelector: () => null, querySelectorAll: () => [], addEventListener: (t, f) => { if (t === 'click') click = f; } };
+const root = { innerHTML: '', innerText: '', querySelector: () => null, querySelectorAll: () => [], addEventListener: (t, f) => { if (t === 'click') click = f; } };
 const sandbox = {
   acquireVsCodeApi: () => ({ getState: () => undefined, setState: (s) => { saved = s; }, postMessage: (m) => posted.push(m) }),
   document: { getElementById: () => root },
@@ -18,7 +18,7 @@ new Function(...Object.keys(sandbox), src)(...Object.values(sandbox));
 const send = (state) => { listeners.message({ data: { type: 'state', ...state } }); return root.innerHTML; };
 const press = (dataset) => click({ target: { closest: () => ({ dataset, disabled: false }) } });
 
-assert.deepStrictEqual(posted, [{ type: 'ready' }], 'the page asks for its state once it has loaded');
+assert.deepStrictEqual(posted.filter(m => m.type !== 'rendered'), [{ type: 'ready' }], 'the page asks for its state once it has loaded');
 assert.match(root.innerHTML, /No course yet/);
 
 const data = {
@@ -58,6 +58,7 @@ assert.match(h, /data-reset="" data-title="Rust &lt;fundamentals&gt;"/, 'the who
 
 posted.length = 0;
 press({ press: 'check' });
+posted.splice(0, posted.length, ...posted.filter(m => m.type !== 'rendered'));
 press({ press: 'tutor' });
 press({ lesson: '' });
 press({ reset: 'own', title: 'Ownership' });

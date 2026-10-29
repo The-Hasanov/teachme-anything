@@ -38,6 +38,29 @@ async function run() {
     const editor = await vscode.window.showTextDocument(notes, { preview: false });
     await editor.edit(e => e.insert(new vscode.Position(1, 0), 'typing'));
 
+    const { dashboard } = ext.exports.lesson;
+    const dashboards = () => vscode.window.tabGroups.all.flatMap(g => g.tabs).filter(t => t.input instanceof vscode.TabInputWebview && /teachme\.dashboard/.test(t.input.viewType));
+    const clickAndWait = async (selector, ok) => {
+        const done = new Promise((resolve, reject) => {
+            const timer = setTimeout(() => { off(); reject(new Error(`no render after clicking ${selector}`)); }, 5000);
+            const off = dashboard.onRender(r => { if (ok(r)) { clearTimeout(timer); off(); resolve(r); } });
+        });
+        await sleep(400);
+        dashboard.click(selector);
+        return done;
+    };
+    const DASHBOARD_VIEW = {
+        screen: { kind: 'exercise', title: 'Your turn: shout', progress: { label: 'Ownership and borrowing · 5 of 6', done: 4, total: 6 }, result: { tone: 'wrong', text: 'Not yet: shout fails.' }, actions: [{ id: 'check', label: 'Check', primary: true }, { id: 'hint', label: 'Hint 1' }] },
+        dashboard: {
+            title: 'Rust fundamentals', goal: 'write safe tools', overall: { label: '4 of 9 lessons', done: 4, total: 9 },
+            phases: [
+                { id: 'basics', title: 'Basics', mark: 'ok', done: 3, total: 3, lessons: [{ title: 'Functions', status: 'done' }] },
+                { id: 'own', title: 'Ownership and borrowing', mark: 'now', done: 1, total: 3, lessons: [{ title: 'Moves', status: 'done' }, { title: 'Borrowing', status: 'now', steps: '5 of 6 steps' }, { title: 'Not written yet', status: 'writing' }] },
+                { id: 'structs', title: 'Structs, enums and errors', mark: 'todo', done: 0, total: 3, lessons: [{ title: 'Not written yet', status: 'failed' }] },
+            ],
+        },
+    };
+
     await check('a screen from the mod reaches the view without taking focus', async () => {
         const t0 = Date.now();
         const r = await view({ screen: { kind: 'step', title: 'A branch is a label', actions: [] } });
@@ -152,12 +175,35 @@ async function run() {
     });
 
     await check('the dashboard opens once as an editor tab, and a second open reuses it', async () => {
-        const dashboards = () => vscode.window.tabGroups.all.flatMap(g => g.tabs).filter(t => t.input instanceof vscode.TabInputWebview && /teachme\.dashboard/.test(t.input.viewType));
         await vscode.commands.executeCommand('teachme.dashboard');
         await until(() => dashboards().length === 1);
         await vscode.commands.executeCommand('teachme.dashboard');
         await sleep(300);
         assert.strictEqual(dashboards().length, 1);
+    });
+
+    await check('dashboard Path tab: the course, each section with its lessons and the current step', async () => {
+        await view(DASHBOARD_VIEW);
+        const r = await until(() => { const r = dashboard.rendered(); return r?.tab === 'path' && r.text.includes('Structs, enums and errors') && r; });
+        for (const text of ['Rust fundamentals', '4 of 9 lessons', 'Ownership and borrowing', 'Borrowing', '5 of 6 steps', 'Being written', 'Could not be written']) assert.ok(r.text.includes(text), `Path tab misses "${text}"`);
+        assert.ok(!r.text.includes('Connected to Claude Code'), 'Path tab shows no control card');
+    });
+
+    await check('dashboard Control tab: a click on the tab shows the step and its buttons; Check reaches Claude Code', async () => {
+        const first = await (await fetch(`${base}/lesson/events?after=0&wait=0`, { headers: auth })).json();
+        await clickAndWait('[data-tab="control"]', r => r.tab === 'control');
+        await until(() => dashboard.rendered()?.text.includes('Connected to Claude Code'));
+        const r = dashboard.rendered();
+        for (const text of ['Your turn: shout', 'Not yet', 'Check', 'Hint 1', 'Lesson in the terminal', 'Reset the whole course']) assert.ok(r.text.includes(text), `Control tab misses "${text}"`);
+        const poll = fetch(`${base}/lesson/events?after=${first.last}&wait=5000`, { headers: auth }).then(x => x.json());
+        await sleep(100);
+        dashboard.click('[data-press="check"]');
+        const got = await poll;
+        assert.ok(got.events.some(e => e.type === 'press' && e.press.action === 'check'), JSON.stringify(got.events));
+    });
+
+    await check('dashboard tabs switch back: a click on Path shows the sections again', async () => {
+        await clickAndWait('[data-tab="path"]', r => r.tab === 'path' && r.text.includes('Structs, enums and errors'));
         await vscode.window.tabGroups.close(dashboards());
     });
 

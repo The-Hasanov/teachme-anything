@@ -77,6 +77,7 @@
       <main class="tab-body" data-tab="${tab}">${tab === 'path' ? pathTab(d) : controlTab(state.screen, state.up)}</main>`;
     placeIndicator();
     animateBars();
+    vscode.postMessage({ type: 'rendered', tab, text: root.innerText });
   }
 
   function placeIndicator() {
@@ -107,6 +108,7 @@
   window.addEventListener('resize', placeIndicator);
   window.addEventListener('message', (e) => {
     if (e.data.type === 'state') { state = e.data; render(); }
+    if (e.data.type === 'click') root.querySelector(e.data.selector)?.click();
   });
   render();
   vscode.postMessage({ type: 'ready' });

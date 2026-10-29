@@ -11,6 +11,8 @@ function registerDashboard(context, layout, channel) {
     const codicons = vscode.Uri.joinPath(context.extensionUri, 'node_modules', '@vscode', 'codicons', 'dist');
     let panel;
     let state = { data: undefined, screen: undefined, up: false };
+    let rendered;
+    const renders = new Set();
     const post = () => panel?.webview.postMessage({ type: 'state', ...state });
 
     const html = (webview) => {
@@ -36,6 +38,7 @@ function registerDashboard(context, layout, channel) {
         p.webview.html = html(p.webview);
         p.webview.onDidReceiveMessage(m => {
             if (m.type === 'ready') post();
+            if (m.type === 'rendered') { rendered = { tab: m.tab, text: m.text }; renders.forEach(fn => fn(rendered)); }
             if (m.type === 'press') channel.push({ type: 'press', press: m.press, t: Date.now() });
             if (m.type === 'lesson') vscode.commands.executeCommand('teachme.lesson.focus');
             if (m.type === 'reset') void confirmReset(m.phase, m.title);
@@ -46,6 +49,9 @@ function registerDashboard(context, layout, channel) {
     context.subscriptions.push(vscode.commands.registerCommand('teachme.dashboard', open));
     return {
         update(screen, data) { state = { ...state, screen, ...(data ? { data } : {}) }; post(); },
+        rendered: () => rendered,
+        onRender(fn) { renders.add(fn); return () => renders.delete(fn); },
+        click: (selector) => panel?.webview.postMessage({ type: 'click', selector }),
         connection(up) { state = { ...state, up }; post(); },
     };
 }
