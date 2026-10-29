@@ -1,6 +1,6 @@
 import type { Register } from 'claude-code'
 
-import { lessonBandText, lessonGuard, lessonRegister, lessonSection, lessonStarted, lessonTutor, registerLesson } from './lesson'
+import { isDoctor, lessonBandText, lessonGuard, lessonRegister, lessonSection, lessonStarted, lessonTutor, registerLesson } from './lesson'
 
 export const register: Register = (on, options) => {
   registerLesson(on, options)
@@ -16,7 +16,8 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'tutor' }, async $ => (await lessonTutor($)) ?? { text: 'No course here yet. Say "teach me <subject>" to start one.' })
 
   on('tool.call', async ($, e, next) => {
-    const denied = lessonGuard(e.tool, e as unknown as { file_path?: string; notebook_path?: string; command?: string })
+    const input = e as unknown as { file_path?: string; notebook_path?: string; command?: string }
+    const denied = lessonGuard(e.tool, input) && lessonGuard(e.tool, input, await isDoctor($, e.agentId))
     return denied ? { deny: denied } : next(e)
   })
 

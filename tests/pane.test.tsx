@@ -459,6 +459,28 @@ test('#6 a tool installed by hand during setup is found on the next Set up press
   await ui.unmount()
 })
 
+test('only a running doctor agent may repair .teachme/, and never the learner\'s history', async ($, on) => {
+  world(on)
+  const live: { id: string; type: string; status: string }[] = [
+    { id: 'a1', type: 'teachme-anything:doctor', status: 'running' },
+    { id: 'a2', type: 'teachme-anything:author', status: 'running' },
+  ]
+  on('agent.list', () => ({ value: live }) as never)
+  on('tool.call', () => ({ result: 'ran' }))
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  const write = async (agentId: string | undefined, file_path: string) =>
+    (await $.tool.call({ tool: 'Write', file_path, content: '{}', ...(agentId ? { agentId } : {}) } as never) as { deny?: string }).deny
+  const bash = async (agentId: string, command: string) => (await $.tool.call({ tool: 'Bash', command, agentId } as never) as { deny?: string }).deny
+  expect(await write('a1', `${ROOT}/.teachme/scripts/types-1.json`)).toBeUndefined()
+  expect(await bash('a1', 'mv .teachme/scripts/types-1.json .teachme/doctor-backup/')).toBeUndefined()
+  expect(await write('a1', `${ROOT}/.teachme/log/d1.jsonl`)).toMatch(/learner's history/)
+  expect(await bash('a1', 'echo x >> .teachme/metrics.jsonl')).toMatch(/learner's history/)
+  expect(await write('a2', `${ROOT}/.teachme/course.json`)).toMatch(/engine only.*doctor agent repairs/)
+  expect(await write(undefined, `${ROOT}/.teachme/course.json`)).toMatch(/engine only/)
+  live[0]!.status = 'completed'
+  expect(await write('a1', `${ROOT}/.teachme/course.json`)).toMatch(/engine only/)
+})
+
 test('#7 the Bash guard blocks writes into .teachme/ but lets reads with stderr redirects through', () => {
   const blocked = [
     'echo x > .teachme/course.json', 'echo x >> ~/.teachme/log/d1.jsonl', "echo '{}' >'.teachme/state.json'",

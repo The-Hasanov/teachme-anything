@@ -3,3 +3,4 @@ node_modules/
 .vscode-test/
 /tsconfig.json
 .claude-plugin/types/
+graft/
