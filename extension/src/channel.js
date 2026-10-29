@@ -56,6 +56,7 @@ function startChannel({ folders, onView, dir = path.join(os.homedir(), '.teachme
             const w = { res, after, id: owner.id, timer: setTimeout(() => { waiting = waiting.filter(x => x !== w); json(res, 200, since(after)); }, wait) };
             waiting.push(w);
             req.on('close', () => { clearTimeout(w.timer); waiting = waiting.filter(x => x !== w); });
+            res.on('close', () => { if (!res.writableFinished) lastPollAt = 0; });
             return;
         }
         if (req.method === 'POST' && url.pathname === '/lesson/view') {

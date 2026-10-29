@@ -25,7 +25,19 @@ import type { LayoutOp, VsCode } from './host/vscode'
 
 const PLUGIN = 'teachme-anything'
 const PANE = 'teach'
-const SPARK = '▁▂▃▄▅▆▇█'
+const ACCENT = 'suggestion'
+const BAR_CELLS = 20
+const EIGHTHS = ' ▁▂▃▄▅▆▇█'
+const CURVE_ROWS = 6
+const curveRows = (points: number[]) => {
+  const colWidth = points.length <= 20 ? 3 : 2
+  return Array.from({ length: CURVE_ROWS }, (_, i) => {
+    const row = CURVE_ROWS - 1 - i
+    const axis = i === 0 ? '100 ┤' : row === 0 ? '  0 ┤' : '    │'
+    const bars = points.map(v => EIGHTHS[Math.max(0, Math.min(8, Math.round(v * CURVE_ROWS * 8) - row * 8))]!.repeat(colWidth - 1) + ' ').join('')
+    return { axis, bars }
+  })
+}
 const OUT_ERR = /^(Traceback|\s+File "|\w*(Error|Exception)\b|error[:[]|fatal:|ERROR\b|FAIL\b)/
 const OUT_WARN = /^(warning[:[]|Warning\b|WARN\b|hint:)/i
 const TOOL = (name: string) => `mcp__${PLUGIN}__${name}`
@@ -835,20 +847,35 @@ export const registerLesson: Register = on => {
     if (!sc) return <Text dimColor>Say "teach me &lt;subject&gt;" to start.</Text>
     const go = (p: Press) => () => { void dispatch($, p) }
     const tone = (t?: string) => t === 'right' ? 'success' : t === 'wrong' ? 'warning' : undefined
-    const glyph = { ok: '✓', todo: '○', fail: '✗', run: '…', now: '●' } as const
+    const glyph = { ok: '✓', todo: '○', fail: '⚠', run: '…', now: '●' } as const
+    const markColor = { ok: 'success', todo: undefined, fail: 'warning', run: undefined, now: ACCENT } as const
     const line = (l: Line, key: string) => (
       <Box key={key} flexDirection="column">
-        <Text color={l.mark === 'ok' ? 'success' : l.mark === 'fail' ? 'warning' : undefined}>{glyph[l.mark]} {l.text}</Text>
+        <Text color={markColor[l.mark]} dimColor={l.mark === 'todo' || l.mark === 'run'}>{glyph[l.mark]} {l.text}</Text>
         {l.detail && <Text dimColor>  {l.detail}</Text>}
       </Box>
     )
+    const filled = sc.progress ? Math.round(BAR_CELLS * sc.progress.done / Math.max(1, sc.progress.total)) : 0
     return (
       <Box flexDirection="column" gap="sm">
-        {sc.progress && <Text dimColor>{sc.progress.label} {'▓'.repeat(Math.round(5 * sc.progress.done / Math.max(1, sc.progress.total)))}{'░'.repeat(5 - Math.round(5 * sc.progress.done / Math.max(1, sc.progress.total)))}</Text>}
-        <Text bold>{sc.title}</Text>
+        {sc.progress && (
+          <Box flexDirection="row" columnGap={1}>
+            <Text dimColor>{sc.progress.label}</Text>
+            <Text><Text color={ACCENT}>{'━'.repeat(filled)}</Text><Text dimColor>{'─'.repeat(BAR_CELLS - filled)}</Text></Text>
+          </Box>
+        )}
+        <Box flexDirection="row">
+          <Text color={ACCENT}>▎</Text>
+          <Text bold>{sc.title}</Text>
+        </Box>
         {sc.body && <Markdown text={sc.body} />}
-        {sc.compare && <Markdown text={`${sc.compare.text}\n\n*Where it stops:* ${sc.compare.stops}`} />}
-        {sc.code && <Box borderStyle="round" borderColor="subtle" paddingX={1}><Code source={sc.code.source} language={sc.code.lang} wrap="wrap" /></Box>}
+        {sc.compare && (
+          <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
+            <Markdown text={sc.compare.text} />
+            <Text dimColor><Text bold>Where it stops:</Text> {sc.compare.stops}</Text>
+          </Box>
+        )}
+        {sc.code && <Box borderStyle="round" borderColor={ACCENT} paddingX={1}><Code source={sc.code.source} language={sc.code.lang} wrap="wrap" /></Box>}
         {sc.where && (
           <Box flexDirection="column">
             {sc.where.file && <Text dimColor>Edit {sc.where.dir}/{sc.where.file}</Text>}
@@ -856,7 +883,7 @@ export const registerLesson: Register = on => {
           </Box>
         )}
         {sc.frame && (
-          <Box flexDirection="column" paddingX={1} borderStyle="single" borderColor="suggestion">
+          <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor={ACCENT}>
             <Text dimColor>Frame {sc.frame.i + 1} of {sc.frame.n}</Text>
             {sc.frame.state && <Code source={sc.frame.state} wrap="wrap" />}
             {sc.frame.code && <Code source={sc.frame.code} wrap="wrap" />}
@@ -865,8 +892,8 @@ export const registerLesson: Register = on => {
         )}
         {sc.output !== undefined && (
           <Box flexDirection="column">
-            <Text dimColor>Output</Text>
-            <Box flexDirection="column" paddingX={1}>
+            <Text dimColor>▸ Output</Text>
+            <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="subtle">
               {sc.output.split('\n').map((l, i) => <Text key={`out-${i}`} color={OUT_ERR.test(l) ? 'error' : OUT_WARN.test(l) ? 'warning' : undefined}>{l || ' '}</Text>)}
             </Box>
           </Box>
@@ -893,14 +920,19 @@ export const registerLesson: Register = on => {
         )}
         {sc.lines?.map((l, i) => line(l, `line-${i}`))}
         {sc.tiles && (
-          <Box flexDirection="row" flexWrap="wrap" columnGap={3}>
-            {sc.tiles.map(t => <Text key={`tile-${t.label}`}><Text bold>{t.value}</Text> <Text dimColor>{t.label}</Text></Text>)}
+          <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+            {sc.tiles.map(t => (
+              <Box key={`tile-${t.label}`} flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} minWidth={18}>
+                <Text bold>{t.value}</Text>
+                <Text dimColor>{t.label}</Text>
+              </Box>
+            ))}
           </Box>
         )}
         {sc.chart && (
           <Box flexDirection="column">
-            <Text color="suggestion">{sc.chart.points.map(v => SPARK[Math.round(v * (SPARK.length - 1))]).join('')}</Text>
-            <Text dimColor>{sc.chart.label} · first {Math.round(100 * sc.chart.points[0]!)}%, now {Math.round(100 * sc.chart.points.at(-1)!)}%</Text>
+            {curveRows(sc.chart.points).map((r, i) => <Text key={`curve-${i}`}><Text dimColor>{r.axis}</Text><Text color={ACCENT}>{r.bars}</Text></Text>)}
+            <Text dimColor>{sc.chart.label}</Text>
           </Box>
         )}
         {sc.groups?.map(g => (
@@ -914,15 +946,22 @@ export const registerLesson: Register = on => {
             {ch.used
               ? <Text dimColor>✓ {ch.n}  {ch.text}</Text>
               : ch.mark || (sc.result && sc.result.tone !== 'info')
-              ? <Text color={ch.mark === 'right' || ch.mark === 'key' ? 'success' : ch.mark === 'wrong' ? 'warning' : undefined} dimColor={!ch.mark}>{ch.mark === 'right' ? '✓' : ch.mark === 'wrong' ? '✗' : ch.mark === 'key' ? '→' : ' '} {ch.n}  {ch.text}</Text>
+              ? <Text color={ch.mark === 'right' || ch.mark === 'key' ? 'success' : ch.mark === 'wrong' ? 'warning' : undefined} dimColor={!ch.mark}>{ch.mark === 'right' ? '✓' : ch.mark === 'wrong' ? '✗' : ch.mark === 'key' ? '✓' : ' '} {ch.n}  {ch.text}</Text>
               : <Button key={`choose-${ch.n}`} hotkey={String(ch.n)} plain onPress={go({ choose: ch.n })}>{ch.text}</Button>}
             {ch.code && ch.code.trim() !== ch.text.trim() && <Box paddingX={2}><Code source={ch.code} wrap="wrap" /></Box>}
             {ch.mark && ch.why && <Text dimColor>    {ch.why}</Text>}
           </Box>
         ))}
         {sc.input && Input && <Input key="intake-text" placeholder={sc.input.placeholder} submitLabel="send" onSubmit={(v: string) => { if (v.trim()) void dispatch($, { text: v }) }} />}
-        {sc.hint && <Text color="suggestion">Hint {sc.hint.level}: {sc.hint.text}</Text>}
-        {sc.result && sc.result.tone === 'info' && sc.kind === 'step' ? <Markdown text={sc.result.text} /> : sc.result && <Text color={tone(sc.result.tone)} italic={sc.result.tone === 'wait'}>{sc.result.tone === 'right' ? '✓ ' : sc.result.tone === 'wrong' ? '✗ ' : ''}{sc.result.text}</Text>}
+        {sc.hint && (
+          <Box borderStyle="round" borderColor="subtle" paddingX={1}>
+            <Text><Text bold>Hint {sc.hint.level}.</Text> {sc.hint.text}</Text>
+          </Box>
+        )}
+        {sc.result && (sc.result.tone === 'right' || sc.result.tone === 'wrong'
+          ? <Box borderStyle="round" borderColor={tone(sc.result.tone)} paddingX={1}><Text color={tone(sc.result.tone)}>{sc.result.tone === 'right' ? '✓ ' : '⚠ '}{sc.result.text}</Text></Box>
+          : sc.result.tone === 'wait' ? <Text dimColor italic>… {sc.result.text}</Text>
+          : <Markdown text={sc.result.text} />)}
         {(sc.actions.length > 0 || e.surface === 'terminal') && (
           <Box flexDirection="row" flexWrap="wrap" gap="sm">
             {sc.actions.map(a => (
@@ -931,7 +970,12 @@ export const registerLesson: Register = on => {
             {e.surface === 'terminal' && <Button key="open-vscode" variant="secondary" hotkey="v" onPress={() => { void openInVsCode($) }}>Open in VS Code</Button>}
           </Box>
         )}
-        {sc.more && <Text dimColor>{sc.more}</Text>}
+        {sc.more && (
+          <Box flexDirection="column">
+            <Text dimColor bold>More</Text>
+            <Markdown text={sc.more} />
+          </Box>
+        )}
       </Box>
     )
   })
