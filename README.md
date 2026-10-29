@@ -75,6 +75,13 @@ node extension/test/fsrs-ref.cjs              # FSRS against ts-fsrs
 cd extension && npm install && npm test       # channel, layout lint, VS Code layout and focus
 ```
 
+Before a release, also run the end-to-end eval. It uses the real model (about 3 minutes and $0.60 a run): a course on
+a subject that isn't built in is written by the author agent, then a second author run plans a build-with-me project.
+
+```sh
+claude plugin eval . --case next-lesson-arrives --runs 1 --ablation none --allow-tools "mcp__teachme-anything__*"
+```
+
 ## License
 
 MIT
