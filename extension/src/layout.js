@@ -37,6 +37,13 @@ class LayoutManager {
         if (op.op === 'terminal') return this.terminalAt(op.cwd);
         if (op.op === 'reference') return this.open(op.path, true);
         if (op.op === 'practice') return this.open(op.path, false);
+        if (op.op === 'reveal') return this.reveal(op);
+    }
+
+    async reveal(op) {
+        await vscode.commands.executeCommand('teachme.lesson.focus');
+        if (op.cwd) this.terminalAt(op.cwd);
+        if (op.path) await this.open(op.path, false);
     }
 
     terminalAt(cwd) {

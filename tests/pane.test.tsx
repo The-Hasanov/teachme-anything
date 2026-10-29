@@ -90,7 +90,7 @@ test('teach me Git in an empty folder: course installed, pane drawn everywhere, 
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect((await ui.find({ type: 'Text', text: /Git for teamwork/ }))?.text).toBe('Git for teamwork')
-    expect(await ui.findAll({ type: 'Button' })).toHaveLength(3)
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(surface === 'terminal' ? 4 : 3)
     await ui.unmount()
   }
 
@@ -99,7 +99,7 @@ test('teach me Git in an empty folder: course installed, pane drawn everywhere, 
   await ui.press({ key: 'choose-2' })
   await ui.press({ key: 'choose-1' })
   expect((await ui.find({ type: 'Text', text: /Your setup/ }))?.text).toBe('Your setup')
-  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Set up'])
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Set up', 'Open in VS Code'])
   await ui.unmount()
 
   expect(calls.model).toBe(0)
@@ -136,10 +136,10 @@ test('a subject with no course: the intake runs while the author writes the cour
   expect(prompts()).toHaveLength(1)
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['My job', 'A project of my own', 'A course or an interview', 'Curiosity'])
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['My job', 'A project of my own', 'A course or an interview', 'Curiosity', 'Open in VS Code'])
   await ui.press({ key: 'choose-1' }); await ui.press({ key: 'choose-2' }); await ui.press({ key: 'choose-1' })
   expect((await ui.find({ type: 'Text', text: /Writing your course/ }))).toBeTruthy()
-  expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Open in VS Code'])
 
   const submit = async (course: unknown) => JSON.parse((await $.tool.call({ tool: 'mcp__teachme-anything__submit_course', course } as never)).result as string)
   const course = {
@@ -151,7 +151,7 @@ test('a subject with no course: the intake runs while the author writes the cour
   expect((await submit({ ...course, setup: [{ id: 'kube', title: 'A cluster', adapter: 'minikube', where: 'local' }] })).errors.join(' ')).toMatch(/adapter must be one of.*setup must end with the verify/)
   expect(await submit(course)).toMatchObject({ ok: true, next: expect.stringMatching(/basics-1/) })
   expect(files[`${ROOT}/.teachme/course.json`]).toMatch(/"What do you want it for\?"/)
-  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Set up'])
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Set up', 'Open in VS Code'])
   await ui.press({ key: 'act-setup' })
   await ui.press({ key: 'act-continue' })
   expect((await ui.find({ type: 'Text', text: /first lesson is being written/ }))).toBeTruthy()
@@ -164,7 +164,7 @@ test('a subject with no course: the intake runs while the author writes the cour
   const intro = { id: 'k0', kind: 'concept', skill: 'pods', difficulty: 1, title: 'Pods', body: 'A pod runs one or more containers together.' }
   expect(await submitSeg({ ...seg, steps: [intro, ...seg.steps] })).toMatchObject({ ok: true })
   expect(Object.entries(files).find(([f]) => f.endsWith('/.teachme/metrics.jsonl'))?.[1]).toMatch(/"kind":"segment-rejected","seg":"basics-1","errors":\["[^"]*skill pods is tested before/)
-  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Start Pods', 'Progress'])
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Start Pods', 'Progress', 'Open in VS Code'])
   await ui.unmount()
 })
 
@@ -300,7 +300,7 @@ test('build with me: pick a suggested project, it is planned into the course, an
 
   const suggestions = [{ title: 'Todo CLI', pitch: 'a todo list that stays fast as it grows' }, { title: 'Search', pitch: 'binary search over your notes' }]
   await $.tool.call({ tool: 'mcp__teachme-anything__build_with_me', suggestions } as never)
-  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Todo CLI: a todo list that stays fast as it grows', 'Search: binary search over your notes', 'Not now'])
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Todo CLI: a todo list that stays fast as it grows', 'Search: binary search over your notes', 'Not now', 'Open in VS Code'])
   await ui.press({ key: 'choose-1' })
   await relay()
   expect(prompts().at(-1)).toMatch(/"Todo CLI"[\s\S]*submit_project/)
@@ -507,7 +507,7 @@ test('a failed setup item offers Fix it for me: the doctor agent fixes the machi
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text).join(' | ')
   for (const key of ['choose-1', 'choose-1', 'choose-1', 'act-setup']) await ui.press({ key })
-  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Set up', 'Fix it for me'])
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Set up', 'Fix it for me', 'Open in VS Code'])
   await ui.press({ key: 'act-heal' })
   await relay()
   expect(spawned.map(e => JSON.stringify(e))).toEqual([expect.stringMatching(/OS: linux.*Python 3 \(adapter python\).*teachme-anything:doctor/)])
@@ -515,7 +515,7 @@ test('a failed setup item offers Fix it for me: the doctor agent fixes the machi
   installed = true
   expect((await $.tool.call({ tool: 'mcp__teachme-anything__recheck_setup' } as never)).result).toMatch(/^✓ Python 3: Python 3\.13\.0\n✓ Practice folder/)
   expect(await texts()).toMatch(/✓ Python 3[\s\S]*✓ Examples and exercises checked on your machine/)
-  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Continue'])
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Continue', 'Open in VS Code'])
   await ui.unmount()
 })
 
@@ -538,6 +538,36 @@ test('#12 a tool only on the login shell PATH is found, and every later command 
   expect(after.length).toBeGreaterThan(3)
   expect(after.every(p => p === '/home/learner/.pyenv/shims:/usr/bin:/bin:/home/learner/.cargo/bin:/home/learner/.local/bin:/opt/homebrew/bin:/usr/local/bin')).toBe(true)
   await ui.unmount()
+})
+
+test('Open in VS Code in the terminal pane launches VS Code on the folder, then shows the lesson view and the step file', async ($, on) => {
+  const { files, net, clock, calls } = world(on)
+  const views: { layout?: unknown }[] = []
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Python' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'open-vscode' })
+  expect(calls.runs.at(-1)).toBe(`cmd /c code ${ROOT}`)
+  expect(views).toEqual([])
+
+  files['C:/Users/learner/.teachme/vscode/7.json'] = JSON.stringify({ port: 7, token: 't', folders: [ROOT], pid: 7 })
+  net.fetch = (url, init) => {
+    if (url.includes('/lesson/view')) { views.push(JSON.parse((init as { body: string }).body)); return { status: 200 } }
+    const reply = { status: 200, text: JSON.stringify({ boot: 'b1', last: 0, events: [] }) }
+    return url.includes('wait=0') ? reply : new Promise<Reply>(() => {})
+  }
+  await clock.advance(2000)
+  expect(views.filter(v => v.layout)).toEqual([{ screen: expect.anything(), layout: { op: 'reveal' } }])
+
+  views.length = 0
+  await ui.press({ key: 'open-vscode' })
+  expect(calls.runs.filter(r => r.includes('code'))).toHaveLength(1)
+  expect(views.at(-1)?.layout).toEqual({ op: 'reveal' })
+  await ui.unmount()
+
+  const desktop = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await desktop.find({ type: 'Button', text: 'Open in VS Code' })).toBeUndefined()
+  await desktop.unmount()
 })
 
 test('#10 a VS Code window driven by a newer session: this one stops drawing there and says so in its band', async ($, on) => {

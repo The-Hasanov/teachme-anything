@@ -142,6 +142,15 @@ async function run() {
         assert.ok(Date.now() - t0 < 3000);
     });
 
+    await check('Open in VS Code shows the lesson view, the practice terminal and the step file', async () => {
+        const cwd = path.join(root, 'practice', 'git-branches');
+        const task = path.join(cwd, 'task.md');
+        fs.writeFileSync(task, '# task\n');
+        await view({ screen: { kind: 'exercise', title: 'Your turn', actions: [] }, layout: { op: 'reveal', cwd, path: task } });
+        await until(() => count(task) === 1);
+        assert.ok(vscode.window.terminals.some(t => t.name === 'Teach Me' && t.creationOptions.cwd?.fsPath?.toLowerCase() === cwd.toLowerCase()), 'no Teach Me terminal in the practice folder');
+    });
+
     await check('the view and the lesson surface are in the secondary side bar, not an editor tab', async () => {
         const tabs = vscode.window.tabGroups.all.flatMap(g => g.tabs);
         assert.ok(!tabs.some(t => t.input instanceof vscode.TabInputWebview), 'no webview tab');
