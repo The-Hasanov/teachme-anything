@@ -85,6 +85,13 @@ p { margin: 0; }
 .btn:disabled { opacity: .45; cursor: default; }
 .btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 
+.ghost { display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 160ms, background 160ms, color 160ms; }
+.phase:hover .ghost, .ghost:focus-visible { opacity: 1; }
+.ghost:hover { color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent); }
+.ghost:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+.danger p { color: var(--muted); margin-bottom: var(--s3); }
+.btn.warn:hover:not(:disabled) { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 50%, var(--border)); }
+
 .empty { display: grid; place-items: center; gap: var(--s3); padding: 15vh 0; color: var(--muted); text-align: center; }
 .empty .codicon { font-size: 40px; }
 

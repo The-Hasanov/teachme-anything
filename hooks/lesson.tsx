@@ -159,7 +159,7 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
 }
 
 // The effects run() handles. tests/invariants checks that the engine asks for no other; run() throws on one it can't do.
-export const HANDLED_EFFECTS: readonly Effect['kind'][] = ['check', 'escalate', 'setup', 'heal', 'practice', 'prepare', 'remedy', 'ask']
+export const HANDLED_EFFECTS: readonly Effect['kind'][] = ['check', 'escalate', 'setup', 'heal', 'practice', 'prepare', 'remedy', 'ask', 'restart']
 
 async function run($: EngineInterface, fx: Effect) {
   const s = sess!
@@ -193,6 +193,7 @@ async function run($: EngineInterface, fx: Effect) {
     if (fx.kind === 'prepare') return prepare($, fx.after, fx.seg)
     if (fx.kind === 'remedy') return remedy($, fx.tag, fx.skill)
     if (fx.kind === 'ask') return ask($, fx.question)
+    if (fx.kind === 'restart') return restartPractice($, fx.segs)
     throw new Error('no handler for this effect')
   } catch (err) {
     s.busy = undefined
@@ -230,6 +231,19 @@ async function ensurePractice($: EngineInterface, rel: string, segId?: string) {
     else await commit($, { events: [{ ts: await $.clock.now(), type: 'added', seg: seg.id }], effects: [] })
   }
   await refresh($, { op: 'terminal', cwd: dir })
+}
+
+async function restartPractice($: EngineInterface, segs: readonly string[]) {
+  const s = sess!
+  const stamp = await $.clock.now()
+  for (const id of segs) {
+    const seg = s.segments[id]
+    if (!seg?.practice || inProject(s, id)) continue
+    const dir = `${s.root}/${seg.practice.dir}`
+    if (await $.fs.exists(dir)) await backUpScaffold($, dir, seg.practice.scaffold, `${dir}.old-${stamp}`)
+    await scaffold($, dir, seg.practice.scaffold, s.os)
+  }
+  void metric($, { kind: 'reset', segs })
 }
 
 async function needsScaffold($: EngineInterface, s: Session, dir: string, seg: Segment) {

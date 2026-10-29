@@ -20,6 +20,12 @@ function registerDashboard(context, layout, channel) {
 </head><body><div id="root"></div><script nonce="${nonce}" src="${src(media, 'dashboard.js')}"></script></body></html>`;
     };
 
+    const confirmReset = async (phase, title) => {
+        const detail = 'Every answer, hint and review in it is cleared, and its practice files are backed up to <folder>.old-<time>, then written fresh. This cannot be undone.';
+        const pick = await vscode.window.showWarningMessage(`Reset your progress in ${title}?`, { modal: true, detail }, 'Reset');
+        if (pick === 'Reset') channel.push({ type: 'press', press: { action: phase ? `reset:${phase}` : 'reset' }, t: Date.now() });
+    };
+
     const open = () => {
         const { panel: p, isNew } = layout.panel(VIEW_TYPE, 'Teach Me', { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [media, codicons] });
         panel = p;
@@ -30,6 +36,7 @@ function registerDashboard(context, layout, channel) {
             if (m.type === 'ready') post();
             if (m.type === 'press') channel.push({ type: 'press', press: m.press, t: Date.now() });
             if (m.type === 'lesson') vscode.commands.executeCommand('teachme.lesson.focus');
+            if (m.type === 'reset') void confirmReset(m.phase, m.title);
         });
         p.onDidDispose(() => { panel = undefined; });
     };

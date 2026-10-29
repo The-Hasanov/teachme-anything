@@ -26,7 +26,7 @@
   function pathTab(d) {
     return `<section class="phases">${d.phases.map((p, i) => `
       <article class="card phase ${p.mark}" style="--i:${i}">
-        <div class="phase-head">${icon(PHASE_ICON[p.mark])}<h2>${esc(p.title)}</h2><span class="count">${p.done} of ${p.total} lessons</span></div>
+        <div class="phase-head">${icon(PHASE_ICON[p.mark])}<h2>${esc(p.title)}</h2><span class="count">${p.done} of ${p.total} lessons</span>${p.mark === 'todo' ? '' : `<button class="ghost" data-reset="${esc(p.id)}" data-title="${esc(p.title)}" title="Reset ${esc(p.title)}" aria-label="Reset ${esc(p.title)}">${icon('discard')}</button>`}</div>
         ${bar(`phase-${i}`, p.done, p.total)}
         <ol class="lessons">${p.lessons.map(l => `
           <li class="lesson ${l.status}"><span class="dot" aria-hidden="true"></span><span class="name">${esc(l.title)}</span><span class="state">${esc(l.steps ?? LESSON_TEXT[l.status])}</span></li>`).join('')}
@@ -55,6 +55,11 @@
           <button class="btn" data-press="tutor" ${up ? '' : 'disabled'}>${icon('terminal')} Lesson in the terminal</button>
           <button class="btn" data-press="progress" ${up ? '' : 'disabled'}>${icon('graph-line')} Progress</button>
         </div>
+      </article>
+      <article class="card danger">
+        <span class="label">Start over</span>
+        <p>Clears every answer, hint and review for the course. Your practice files are backed up first.</p>
+        <div class="actions"><button class="btn warn" data-reset="" data-title="${esc(state.data?.title ?? 'the course')}" ${up ? '' : 'disabled'}>${icon('discard')} Reset the whole course</button></div>
       </article>
     </section>`;
   }
@@ -95,6 +100,7 @@
     if (!t || t.disabled) return;
     if (t.dataset.tab) { tab = t.dataset.tab; vscode.setState({ tab }); render(); return; }
     if (t.dataset.lesson !== undefined) return vscode.postMessage({ type: 'lesson' });
+    if (t.dataset.reset !== undefined) return vscode.postMessage({ type: 'reset', phase: t.dataset.reset || undefined, title: t.dataset.title });
     if (t.dataset.press) vscode.postMessage({ type: 'press', press: { action: t.dataset.press } });
   });
   window.addEventListener('resize', placeIndicator);

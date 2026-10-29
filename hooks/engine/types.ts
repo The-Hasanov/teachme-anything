@@ -115,6 +115,7 @@ export type LogEvent = { ts: number; device?: string } & (
   | { type: 'aside'; on: boolean; step?: string }
   | { type: 'migrated'; skill: string; state: string; evidence: string; date: string }
   | { type: 'migrated-note'; text: string; skill?: string }
+  | { type: 'reset'; segs: string[]; steps: string[]; skills: string[]; rewind: boolean; before?: string }
 )
 
 export type Stage = 'intake' | 'setup' | 'curriculum' | 'lesson' | 'recap'
@@ -158,7 +159,7 @@ export type Dashboard = {
   title: string
   goal: string
   overall: { label: string; done: number; total: number }
-  phases: { title: string; mark: 'ok' | 'now' | 'todo'; done: number; total: number; lessons: { title: string; status: LessonStatus; steps?: string }[] }[]
+  phases: { id: string; title: string; mark: 'ok' | 'now' | 'todo'; done: number; total: number; lessons: { title: string; status: LessonStatus; steps?: string }[] }[]
 }
 
 export type Effect =
@@ -170,6 +171,7 @@ export type Effect =
   | { kind: 'remedy'; tag: string; skill?: string }
   | { kind: 'practice'; dir: string; seg: string }
   | { kind: 'ask'; question?: string }
+  | { kind: 'restart'; segs: string[] }
 
 export type ProjectPick = { title: string; pitch: string; subject?: string }
 export type Build = { stage: 'pick' | 'planning' | 'ready'; suggestions: ProjectPick[]; title?: string; note?: string }

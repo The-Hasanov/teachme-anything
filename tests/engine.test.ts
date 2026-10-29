@@ -352,8 +352,8 @@ test('the dashboard path: lessons done, the current one with its step, the next 
     title: git.course.subject, goal: git.course.goal,
     overall: { label: '0 of 2 lessons', done: 0, total: 2 },
     phases: [
-      { title: 'Branches', mark: 'now', done: 0, total: 1, lessons: [{ title: 'Branches', status: 'now', steps: `1 of ${steps} steps` }] },
-      { title: 'Merging', mark: 'todo', done: 0, total: 1, lessons: [{ title: 'Not written yet', status: 'todo' }] },
+      { id: 'branches', title: 'Branches', mark: 'now', done: 0, total: 1, lessons: [{ title: 'Branches', status: 'now', steps: `1 of ${steps} steps` }] },
+      { id: 'merging', title: 'Merging', mark: 'todo', done: 0, total: 1, lessons: [{ title: 'Not written yet', status: 'todo' }] },
     ],
   })
   l.take({ events: [{ ts: l.c.now, type: 'stage', stage: 'recap' }], effects: [] })
@@ -362,6 +362,39 @@ test('the dashboard path: lessons done, the current one with its step, the next 
   expect(dashboard(l.c)?.overall).toEqual({ label: '1 of 2 lessons', done: 1, total: 2 })
   Object.assign(l.c, { preparing: false, prepError: 'cargo check failed' })
   expect(dashboard(l.c)?.phases[1]?.lessons[0]?.status).toBe('failed')
+})
+
+test('reset a section: its answers, hints and reviews are cleared, the learner starts it again, practice is rewritten', () => {
+  const l = learner()
+  l.toLesson()
+  const step = l.step()
+  expect(press(l.c, { action: 'reset:merging' }).events[0]).toMatchObject({ type: 'reset', segs: ['merge-1'], rewind: false })
+  l.take({ events: [
+    { ts: l.c.now, type: 'hint', step, level: 1 },
+    { ts: l.c.now, type: 'migrated', skill: 'branch-model', state: 'practiced', evidence: 'x', date: '2026-01-01' },
+    { ts: l.c.now, type: 'stage', stage: 'recap' },
+  ], effects: [] })
+  expect([l.c.state.hints[step], l.c.state.done, l.c.state.migrated.length]).toEqual([1, 'branches-1', 1])
+
+  const out = l.go({ action: 'reset:branches' })
+  expect(out.events[0]).toMatchObject({ type: 'reset', segs: ['branches-1'], skills: ['branch-model', 'branch-switch', 'branch-commit', 'branch-from'], rewind: true })
+  expect(out.effects).toEqual([{ kind: 'restart', segs: ['branches-1'] }])
+  expect(l.c.state).toMatchObject({ stage: 'curriculum', pos: undefined, done: undefined, hints: {}, migrated: [] })
+  expect(replay(l.log)).toEqual(l.c.state)
+  expect(screen(l.c).actions.map(a => a.id)).toContain('start')
+  l.go({ action: 'start' })
+  expect(current(l.c)?.seg.id).toBe('branches-1')
+})
+
+test('reset the whole course clears every section; a reset before setup is ignored', () => {
+  const l = learner()
+  expect(press(l.c, { action: 'reset' })).toEqual({ events: [], effects: [] })
+  l.toLesson()
+  const out = l.go({ action: 'reset' })
+  expect(out.events[0]).toMatchObject({ type: 'reset', segs: ['branches-1', 'merge-1'], rewind: true })
+  expect(out.effects).toEqual([{ kind: 'restart', segs: ['branches-1', 'merge-1'] }])
+  expect(l.c.state.stage).toBe('curriculum')
+  expect(press(l.c, { action: 'reset:nope' })).toEqual({ events: [], effects: [] })
 })
 
 test('"I don\'t know" teaches the idea, brings the skill back, and is neither right nor wrong; the tutor sees the step', () => {

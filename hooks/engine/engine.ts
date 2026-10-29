@@ -66,6 +66,29 @@ function learn(s: LearnerState, o: Outcome): Pick<LearnerState, 'cards' | 'weak'
   return { cards, weak }
 }
 
+function forget(s: LearnerState, e: Extract<LogEvent, { type: 'reset' }>): LearnerState {
+  const steps = new Set(e.steps)
+  const segs = new Set(e.segs)
+  const skills = new Set(e.skills)
+  const without = <T>(r: Record<string, T>, drop: (key: string, value: T) => boolean) => Object.fromEntries(Object.entries(r).filter(([k, v]) => !drop(k, v)))
+  const isStep = (k: string) => steps.has(k.replace(/^warm\d+:/, ''))
+  const isGone = (w: Weakness) => skills.has(w.skill ?? '') || (w.steps.length > 0 && w.steps.every(x => steps.has(x)))
+  const weak = without(s.weak, (_, w) => isGone(w))
+  return {
+    ...s,
+    ...(e.rewind ? { pos: undefined, done: e.before } : {}),
+    warm: undefined, aside: false,
+    tries: without(s.tries, isStep), hints: without(s.hints, isStep), result: without(s.result, isStep), solved: without(s.solved, isStep),
+    idk: without(s.idk, isStep), asked: without(s.asked, isStep), drills: without(s.drills, isStep), draft: without(s.draft, isStep), frame: without(s.frame, isStep),
+    gated: without(s.gated, k => segs.has(k)), added: without(s.added, k => segs.has(k)),
+    cards: without(s.cards, k => (k.startsWith('skill:') && skills.has(k.slice(6))) || (k.startsWith('w:') && !weak[k.slice(2)])),
+    weak,
+    evidence: s.evidence.filter(x => !steps.has(x.step)),
+    mistakes: s.mistakes.filter(x => !steps.has(x.step)),
+    migrated: s.migrated.filter(x => !skills.has(x.skill)),
+  }
+}
+
 export function apply(s: LearnerState, e: LogEvent): LearnerState {
   const tries = (step: string) => ({ ...s.tries, [step]: (s.tries[step] ?? 0) + 1 })
   switch (e.type) {
@@ -100,6 +123,7 @@ export function apply(s: LearnerState, e: LogEvent): LearnerState {
       return { ...s, notes: [...s.notes, e.text], weak }
     }
     case 'migrated': return { ...s, migrated: [...s.migrated, { skill: e.skill, state: e.state, evidence: e.evidence, date: e.date }] }
+    case 'reset': return forget(s, e)
     case 'answer': {
       const ok = e.verdict === 'right'
       const rk = e.rk ?? e.step
@@ -332,6 +356,7 @@ export function press(c: Ctx, p: Press): Out {
     if (action === 'continue' && setupDone(c)) return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
     return NONE
   }
+  if (action?.startsWith('reset') && ['curriculum', 'recap', 'lesson'].includes(s.stage)) return reset(c, action.split(':')[1])
   if (s.stage === 'curriculum' || s.stage === 'recap') {
     if (action === 'start') {
       const go = resume(c)
@@ -392,6 +417,23 @@ function resume(c: Ctx): Out | undefined {
 }
 
 const missingSegment = (c: Ctx) => { const seg = c.state.pos?.seg; return seg && !c.segments[seg] ? seg : undefined }
+function reset(c: Ctx, phaseId?: string): Out {
+  const course = c.course!
+  const phases = phaseId ? course.phases.filter(p => p.id === phaseId) : course.phases
+  if (!phases.length) return NONE
+  const segs = phases.flatMap(p => p.segments)
+  const order = segmentOrder(course)
+  const first = order.indexOf(segs[0]!)
+  const at = c.state.done ? order.indexOf(c.state.done) + 1 : c.state.pos ? order.indexOf(c.state.pos.seg) : 0
+  const before = order[first - 1]
+  const event: LogEvent = {
+    ts: c.now, type: 'reset', segs, rewind: at >= first, ...(before ? { before } : {}),
+    steps: segs.flatMap(id => c.segments[id]?.steps.map(x => x.id) ?? []),
+    skills: [...new Set(phases.flatMap(p => p.skills))],
+  }
+  return { events: [event, { ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [{ kind: 'restart', segs }] }
+}
+
 const nextSegment = (c: Ctx, seg: string) => { const order = c.course ? segmentOrder(c.course) : []; return order[order.indexOf(seg) + 1] }
 // After a finished segment: is the next one ready, being written, missing (nobody writing it), or is the course over
 const ahead = (c: Ctx) => {
@@ -753,7 +795,7 @@ export function dashboard(c: Ctx): Dashboard | undefined {
     const lessons = p.segments.map(lesson)
     const done = lessons.filter(l => l.status === 'done').length
     const mark = done === lessons.length && lessons.length ? 'ok' as const : lessons.some(l => l.status !== 'todo' && l.status !== 'ready') || done ? 'now' as const : 'todo' as const
-    return { title: p.title, mark, done, total: lessons.length, lessons }
+    return { id: p.id, title: p.title, mark, done, total: lessons.length, lessons }
   })
   const done = phases.reduce((n, p) => n + p.done, 0)
   return { title: course.subject, goal: course.goal, overall: { label: `${done} of ${order.length} lessons`, done, total: order.length }, phases }
