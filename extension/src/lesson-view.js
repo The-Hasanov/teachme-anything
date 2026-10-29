@@ -3,6 +3,7 @@ const vscode = require("vscode");
 const crypto = require("crypto");
 const { startChannel } = require("./channel");
 const { LayoutManager } = require("./layout");
+const { registerDashboard } = require("./dashboard");
 
 function registerLessonView(context) {
     const layout = new LayoutManager(context);
@@ -13,20 +14,22 @@ function registerLessonView(context) {
     const post = (m) => view?.webview.postMessage(m);
     const channel = startChannel({
         folders: folders(),
-        onView: (screen, op) => {
+        onView: (screen, op, data) => {
             last = screen;
+            dashboard.update(screen, data);
             watchers.forEach(fn => fn(screen));
             post({ type: 'screen', screen });
             try { layout.apply(op); } catch (e) { console.error('[teachme] layout', e); }
         },
     });
+    const dashboard = registerDashboard(context, layout, channel);
     channel.ready.catch(e => vscode.window.showErrorMessage(`Teach Me: the lesson view cannot listen: ${e.message}`));
     context.subscriptions.push({ dispose: () => channel.close() }, vscode.workspace.onDidChangeWorkspaceFolders(() => channel.setFolders(folders())));
 
     let up;
     const timer = setInterval(() => {
         const now = channel.isConnected();
-        if (now !== up) { up = now; post({ type: 'connection', up }); }
+        if (now !== up) { up = now; post({ type: 'connection', up }); dashboard.connection(up); }
     }, 2000);
     context.subscriptions.push({ dispose: () => clearInterval(timer) });
 

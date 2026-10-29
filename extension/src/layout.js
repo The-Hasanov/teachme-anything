@@ -17,6 +17,7 @@ class LayoutManager {
         this.tabs = saved.tabs ?? [];
         this.terminal = vscode.window.terminals.find(t => t.name === TERMINAL);
         this.running = new Set();
+        this.panels = new Map();
         context.subscriptions.push(
             vscode.window.onDidCloseTerminal(t => { this.running.delete(t); if (t === this.terminal) this.terminal = undefined; }),
             vscode.window.onDidStartTerminalShellExecution(e => this.running.add(e.terminal)),
@@ -44,6 +45,15 @@ class LayoutManager {
         await vscode.commands.executeCommand('teachme.lesson.focus');
         if (op.cwd) this.terminalAt(op.cwd);
         if (op.path) await this.open(op.path, false);
+    }
+
+    panel(viewType, title, options) {
+        const open = this.panels.get(viewType);
+        if (open) { open.reveal(); return { panel: open, isNew: false }; }
+        const panel = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Active, options);
+        this.panels.set(viewType, panel);
+        panel.onDidDispose(() => this.panels.delete(viewType));
+        return { panel, isNew: true };
     }
 
     terminalAt(cwd) {

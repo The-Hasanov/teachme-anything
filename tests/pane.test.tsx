@@ -558,7 +558,7 @@ test('Open in VS Code in the terminal pane launches VS Code on the folder, then 
     return url.includes('wait=0') ? reply : new Promise<Reply>(() => {})
   }
   await clock.advance(2000)
-  expect(views.filter(v => v.layout)).toEqual([{ screen: expect.anything(), layout: { op: 'reveal' } }])
+  expect(views.filter(v => v.layout)).toEqual([expect.objectContaining({ screen: expect.anything(), layout: { op: 'reveal' } })])
 
   views.length = 0
   await ui.press({ key: 'open-vscode' })
