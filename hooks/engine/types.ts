@@ -11,7 +11,8 @@ export type Skill = {
   misconceptions: { tag: string; belief: string; prereq?: string }[]
 }
 
-export type Requirement = { id: string; title: string; adapter: string; where: 'local' | 'container'; why?: string }
+// adapter names a tool the engine knows; any other tool is a requirement with "check", the command that finds it
+export type Requirement = { id: string; title: string; adapter: string; where: 'local' | 'container'; why?: string; check?: string[] }
 
 // A build-with-me project is a phase: "project" is its folder, each segment one milestone in it
 export type Phase = { id: string; title: string; skills: string[]; segments: string[]; project?: string; brief?: string }
@@ -116,6 +117,7 @@ export type LogEvent = { ts: number; device?: string } & (
   | { type: 'migrated'; skill: string; state: string; evidence: string; date: string }
   | { type: 'migrated-note'; text: string; skill?: string }
   | { type: 'reset'; segs: string[]; steps: string[]; skills: string[]; rewind: boolean; before?: string }
+  | { type: 'read'; reading: string; section: number }
 )
 
 export type Stage = 'intake' | 'setup' | 'curriculum' | 'lesson' | 'recap'
@@ -149,6 +151,8 @@ export type LearnerState = {
   notes: string[]
   draft: Record<string, number[]>
   frame: Record<string, number>
+  // Explore: the sections of each reading the learner has opened
+  read: Record<string, number[]>
   since?: number
 }
 
@@ -172,6 +176,26 @@ export type Effect =
   | { kind: 'practice'; dir: string; seg: string }
   | { kind: 'ask'; question?: string }
   | { kind: 'restart'; segs: string[]; fresh?: boolean }
+  | { kind: 'explore'; topic?: string }
+
+// Explore: a detailed reading on any topic, open whenever the learner wants. Nothing in it is graded.
+export type Section = {
+  title: string
+  body: string
+  code?: { lang: string; source: string; run?: { file: string; argv: string[]; out: string } }
+  sources: { title: string; url: string }[]
+}
+export type Reading = { format: 'teachme.read/1'; id: string; topic: string; skill?: string; sections: Section[]; related: string[] }
+export type Explore = {
+  reading?: Reading
+  section: number
+  contents?: boolean
+  writing?: string
+  note?: string
+  // Readings already written here, and topics to start from (course skills, related topics)
+  library: { id: string; topic: string; read: number; total: number }[]
+  suggest: string[]
+}
 
 export type ProjectPick = { title: string; pitch: string; subject?: string }
 export type Build = { stage: 'pick' | 'planning' | 'ready'; suggestions: ProjectPick[]; title?: string; note?: string }

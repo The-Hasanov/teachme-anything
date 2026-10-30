@@ -4,7 +4,7 @@ Learn any technical skill with Claude Code as your teacher, inside your own edit
 Every click answers at once, exercises are real and checked on your machine, and a mistake you make twice comes
 back from a new angle until it is fixed for good.
 
-![Top: VS Code with the practice file in the editor and the Teach Me lesson beside it, showing a hint and the cause of a mistake. Bottom: the terminal, with Claude Code on the left and the lesson pane on the right.](docs/workspace.png)
+![Explore in the VS Code lesson view: section 3 of 8 of a reading on Python decorators, about functools.wraps, with its sources, an example and the output it printed on this machine, and buttons for Next section, Previous, Contents, Go deeper, Other topics and Close.](docs/explore.png)
 
 ## Quick start
 
@@ -18,7 +18,7 @@ back from a new angle until it is fixed for good.
 
    ```sh
    cd extension && npm install && npm run package
-   code --install-extension teachme-anything-0.7.5.vsix
+   code --install-extension teachme-anything-0.8.0.vsix
    ```
 
 3. In an empty folder, tell Claude Code: **"teach me &lt;subject&gt;"**.
@@ -27,10 +27,19 @@ back from a new angle until it is fixed for good.
 
 - **Instant lessons.** A small engine runs the lesson: every answer, hint and next step shows in a few
   milliseconds, with no waiting for the model. The teacher works in the background, writing your next lesson.
-- **Any subject.** Git, Python, SQL and Big-O are built in. Anything else is written for you while you answer three
-  questions (about a minute), and every example and exercise is run on your machine before you see it.
+- **Any subject, written for you.** No course ships ready-made. The plan for yours is written while you answer three
+  questions (about a minute), the first lesson starts where your answers say your knowledge ends, and the rest of
+  the path is re-planned from your progress and weak spots as you go. Every example and exercise is run on your
+  machine before you see it.
 - **Real practice.** Code is checked by tests, tools by the state they leave, queries by their results, theory by
-  predicting, tracing and stepping through. One click installs what is missing.
+  predicting, tracing and stepping through. Setup finds the tools a course needs; if any are missing, one click
+  on **Install everything** has Teach Me install and configure them for you.
+- **Explore, freely.** Open any topic and read as much as you want, with no questions or tests: press **Explore** (E)
+  in any lesson, or say "explore <topic>". Each reading is detailed and in sections, its examples are run on your
+  machine and every section names its sources. Move through it in any order, or **Go deeper** on a section.
+- **Learn this codebase.** In a repo, say "teach me this codebase" or run `/teachme-anything:teach-codebase`. The
+  course is written from its code: its architecture, conventions and tests. You practise on a clone in `practice/`,
+  checked by the project's own tests.
 - **Build with me.** Run `/teachme-anything:build-with-me`, then pick one of three projects that fit your level, or
   type your own. It becomes the next phase of your course. In each milestone the setup and tests are added for you,
   then you write the core.
@@ -62,7 +71,7 @@ files in your course folder. Nothing is installed without your click, and the tu
 |---|---|---|
 | Engine | `hooks/engine/` | lesson flow, grading, hints, weakness loop, FSRS reviews, mastery, statistics: pure functions over an event log |
 | Host | `hooks/host/`, `hooks/lesson.tsx` | files, tool adapters, verification, the author agent, the pane, the VS Code channel |
-| Courses | `courses/` | the built-in courses, in the same format the author writes |
+| Example | `hooks/host/example.ts` | the format example the author writes from (no course ships with Teach Me) |
 | Extension | `extension/` | the lesson view, the layout manager, the channel to the plugin |
 | Skills | `skills/` | progress, strengths and weaknesses on request in chat |
 

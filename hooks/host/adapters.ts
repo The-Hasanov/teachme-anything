@@ -8,11 +8,16 @@ export type Env = { os: Os; shell: string; editor: string; tools: Record<string,
 
 const TOOLS: Record<string, string[]> = {
   git: ['git', '--version'],
-  docker: ['docker', '--version'],
-  podman: ['podman', '--version'],
+  // A container tool is set up only when its engine runs: "info" fails while Docker Desktop or the podman machine is off
+  docker: ['docker', 'info', '--format', 'Docker {{.ServerVersion}}'],
+  podman: ['podman', 'info', '--format', 'Podman {{.Version.Version}}'],
   node: ['node', '--version'],
   python: ['python', '--version'],
   cargo: ['cargo', '--version'],
+  php: ['php', '--version'],
+  go: ['go', 'version'],
+  dotnet: ['dotnet', '--version'],
+  java: ['java', '-version'],
 }
 export const isTool = (adapter: string) => adapter in TOOLS
 
@@ -85,10 +90,15 @@ export function installPlan(tool: string, os: Os): { label: string; argv: string
 
 export const MANUAL: Record<string, string> = {
   git: 'https://git-scm.com/downloads',
+  docker: 'https://docs.docker.com/get-started/get-docker/',
   podman: 'https://podman.io/docs/installation',
   python: 'https://www.python.org/downloads/',
   node: 'https://nodejs.org/en/download',
   cargo: 'https://rustup.rs',
+  php: 'https://www.php.net/downloads',
+  go: 'https://go.dev/dl/',
+  dotnet: 'https://dotnet.microsoft.com/download',
+  java: 'https://adoptium.net',
 }
 
 export async function mkdirp($: EngineInterface, dir: string, os: Os) {

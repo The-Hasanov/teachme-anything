@@ -24,7 +24,7 @@ checks only if the learner asked for a full check, then report each as ✓ or �
 3. **Setup tools.** Call `mcp__teachme-anything__recheck_setup`: it runs the setup checks in the engine.
    ✗ a tool: install it, or if your shell finds it but the engine does not, it is missing from the PATH Claude
    Code started with: link it into a folder on that PATH (`~/.local/bin`) or restart Claude Code from a new
-   terminal. Call `recheck_setup` again to confirm. The lesson view's **Fix it for me** runs the same repair.
+   terminal. Call `recheck_setup` again to confirm. The lesson view's **Install everything** (or **Fix it for me**) runs the same repair.
 4. **The engine sees the course.** Call `mcp__teachme-anything__snapshot`.
    ✗ "No Teach Me course in this folder" while step 1 passed: run `/reload-plugins`, then call the snapshot again.
 5. **Extension installed and current.** Run `code --list-extensions --show-versions` (or `code-insiders` or

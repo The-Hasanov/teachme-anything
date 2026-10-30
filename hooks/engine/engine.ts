@@ -1,7 +1,7 @@
 import { RETENTION, dueAt, ratingOf, retrievability, review } from './fsrs'
 import { classify, skillState } from './mastery'
 import { WINDOW, pct, stats } from './stats'
-import type { Action, Build, Course, Dashboard, Effect, LearnerState, LessonStatus, LogEvent, MistakeClass, Phase, Press, Screen, Segment, Step, WarmItem, Weakness } from './types'
+import type { Action, Build, Course, Explore, Dashboard, Effect, LearnerState, LessonStatus, LogEvent, MistakeClass, Phase, Press, Screen, Segment, Step, WarmItem, Weakness } from './types'
 
 export type Ctx = {
   state: LearnerState
@@ -15,6 +15,7 @@ export type Ctx = {
   prepSince?: number
   prepError?: string
   build?: Build
+  explore?: Explore
   // Ask on this step: the agent's explanation once its turn ended, until then the question being answered
   asked?: { question?: string; answer?: string }
 }
@@ -31,7 +32,7 @@ const TASK_KINDS = new Set(['terminal', 'code', 'stage', 'review'])
 
 export const initial = (): LearnerState => ({
   stage: 'intake', intake: {}, setup: {}, tries: {}, hints: {}, result: {}, solved: {}, idk: {}, gated: {}, added: {},
-  evidence: [], mistakes: [], aside: false, asked: {}, migrated: [], notes: [], draft: {}, frame: {}, cards: {}, weak: {}, drills: {},
+  evidence: [], mistakes: [], aside: false, asked: {}, migrated: [], notes: [], draft: {}, frame: {}, cards: {}, weak: {}, drills: {}, read: {},
 })
 
 type Outcome = { ts: number; step: string; ok: boolean; skill?: string; hints: number; cls?: MistakeClass; tag?: string; prereq?: string; remedy?: string; review?: string; uses?: string[] }
@@ -124,6 +125,7 @@ export function apply(s: LearnerState, e: LogEvent): LearnerState {
     }
     case 'migrated': return { ...s, migrated: [...s.migrated, { skill: e.skill, state: e.state, evidence: e.evidence, date: e.date }] }
     case 'reset': return forget(s, e)
+    case 'read': return { ...s, read: { ...s.read, [e.reading]: [...new Set([...(s.read[e.reading] ?? []), e.section])] } }
     case 'answer': {
       const ok = e.verdict === 'right'
       const rk = e.rk ?? e.step
@@ -346,8 +348,11 @@ export function press(c: Ctx, p: Press): Out {
     if (!q || a === undefined) return NONE
     const events: LogEvent[] = [{ ts: c.now, type: 'intake', q: q.id, a }]
     const isLast = c.course.intake.filter(x => s.intake[x.id] === undefined).length === 1
-    if (isLast) events.push({ ts: c.now, type: 'stage', stage: 'setup' })
-    return { events, effects: [] }
+    if (!isLast) return { events, effects: [] }
+    // The answers are in: check the machine, and write lesson 1 for this learner (the course may still be written)
+    events.push({ ts: c.now, type: 'stage', stage: 'setup' })
+    const first = segmentOrder(c.course)[0]
+    return { events, effects: [{ kind: 'setup' }, ...(first && !c.segments[first] ? [{ kind: 'prepare' as const, after: '', seg: first }] : [])] }
   }
   if (s.stage === 'setup') {
     if (c.busy) return NONE
@@ -355,6 +360,10 @@ export function press(c: Ctx, p: Press): Out {
     if (action === 'heal') return { events: [], effects: [{ kind: 'heal' }] }
     if (action === 'continue' && setupDone(c)) return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
     return NONE
+  }
+  if (action === 'explore' && ['curriculum', 'recap', 'lesson'].includes(s.stage)) {
+    const skill = current(c)?.step.skill
+    return { events: [], effects: [{ kind: 'explore', ...(skill && s.stage === 'lesson' ? { topic: skillTitle(c, skill) } : {}) }] }
   }
   if (action?.startsWith('reset') && ['curriculum', 'recap', 'lesson'].includes(s.stage)) return reset(c, action.split(':')[1], action.split(':')[2] === 'fresh')
   if (s.stage === 'curriculum' || s.stage === 'recap') {
@@ -498,6 +507,7 @@ const skillTitle = (c: Ctx, id?: string) => c.course?.skills.find(k => k.id === 
 
 export function screen(c: Ctx): Screen {
   const s = c.state
+  if (c.explore) return exploreScreen(c.explore, c.state)
   if (c.build) return buildScreen(c.build)
   if (!c.course) return { kind: 'empty', title: 'Teach Me', body: 'Say "teach me <subject>" in the chat to start.', actions: [] }
   const course = c.course
@@ -526,12 +536,16 @@ export function screen(c: Ctx): Screen {
   if (s.stage === 'setup') {
     const done = setupDone(c)
     const mark = (st?: string) => st === 'ok' ? 'ok' as const : st === 'running' ? 'run' as const : st === 'failed' ? 'fail' as const : 'todo' as const
+    // One click approves installing and configuring everything listed as missing or failed
+    const needs = course.setup.some(r => ['missing', 'failed'].includes(s.setup[r.id]?.status ?? ''))
+    const tools = course.setup.some(r => s.setup[r.id]?.status === 'missing')
     return {
       kind: 'setup', title: 'Your setup',
       lines: course.setup.map(r => ({ mark: mark(s.setup[r.id]?.status), text: r.title, ...(s.setup[r.id]?.note ? { detail: s.setup[r.id]!.note } : {}) })),
-      ...(c.busy ? { result: { tone: 'wait' as const, text: c.busy } } : {}),
+      ...(c.busy ? { result: { tone: 'wait' as const, text: c.busy } } : tools ? { result: { tone: 'wait' as const, text: 'Teach Me installs and sets up what is missing for you.' } } : {}),
       actions: c.busy ? [] : done ? [act('continue', 'Continue', true, 'enter')]
-        : [act('setup', 'Set up', true, 'enter'), ...(Object.values(s.setup).some(x => x.status === 'failed') ? [act('heal', 'Fix it for me')] : [])],
+        : needs ? [act('heal', tools ? 'Install everything' : 'Fix it for me', true, 'enter'), act('setup', 'Check again')]
+        : [act('setup', 'Set up', true, 'enter')],
     }
   }
   if (s.stage === 'curriculum') {
@@ -550,8 +564,8 @@ export function screen(c: Ctx): Screen {
         }
       }),
       ...(!segmentOrder(course).some(id => c.segments[id])
-        ? { result: { tone: 'wait' as const, text: 'Your first lesson is being written and checked. About a minute.' }, actions: [PROGRESS] }
-        : { ...nextParts(c), actions: [...nextActions(c, s.pos ? 'Continue' : `Start ${course.phases[0]?.title ?? ''}`.trim()), PROGRESS] }),
+        ? { result: { tone: 'wait' as const, text: 'Your first lesson is being written and checked. About a minute.' }, actions: [PROGRESS, EXPLORE] }
+        : { ...nextParts(c), actions: [...nextActions(c, s.pos ? 'Continue' : `Start ${course.phases[0]?.title ?? ''}`.trim()), PROGRESS, EXPLORE] }),
     }
   }
   if (s.stage === 'recap') {
@@ -564,7 +578,7 @@ export function screen(c: Ctx): Screen {
         ...weak.slice(0, 3).map(t => ({ mark: 'todo' as const, text: `Keep sharp: ${t}` })),
       ],
       ...nextParts(c),
-      actions: [...nextActions(c, 'Next lesson'), nextActions(c, '').length ? act('curriculum', 'Path') : act('curriculum', 'Path', true, 'enter'), PROGRESS],
+      actions: [...nextActions(c, 'Next lesson'), nextActions(c, '').length ? act('curriculum', 'Path') : act('curriculum', 'Path', true, 'enter'), PROGRESS, EXPLORE],
     }
   }
   const at = current(c)
@@ -614,8 +628,8 @@ export function screen(c: Ctx): Screen {
       kind: 'question', ...base, ...answerParts(step, res, draft),
       ...(result ? { result } : {}),
       actions: res
-        ? [act('next', res.branch ? 'Practice this' : 'Next', true, 'enter'), ask]
-        : [...edit, unsure ? act('next', 'Move on for now', false, 's') : act('dontknow', "I don't know", false, 'd'), ask],
+        ? [act('next', res.branch ? 'Practice this' : 'Next', true, 'enter'), ask, EXPLORE]
+        : [...edit, unsure ? act('next', 'Move on for now', false, 's') : act('dontknow', "I don't know", false, 'd'), ask, EXPLORE],
     }
   }
   if (step.check) {
@@ -629,7 +643,7 @@ export function screen(c: Ctx): Screen {
         ...(res?.branch ? [act('next', 'Practice this', false, 'p')] : []),
         ...(canHint ? [act('hint', `Hint ${level + 1}`, false, 'h')] : []),
         ...(canSkip(c, step) ? [act('skip', 'Move on for now', false, 's')] : []),
-        ask,
+        ask, EXPLORE,
       ]
     const where = seg.practice ? { where: { dir: seg.practice.dir, ...(step.open ? { file: step.open } : {}) } } : {}
     return { kind: 'exercise', ...base, ...where, ...(result ? { result } : {}), actions }
@@ -643,11 +657,11 @@ export function screen(c: Ctx): Screen {
       actions: [
         ...(last ? [act('next', 'Next', true, 'enter')] : [act('frame-next', 'Next frame', true, 'enter')]),
         ...(i > 0 ? [act('frame-prev', 'Previous frame', false, 'left')] : []),
-        ...(last ? [] : [act('next', 'Skip ahead', false, 's')]), ask,
+        ...(last ? [] : [act('next', 'Skip ahead', false, 's')]), ask, EXPLORE,
       ],
     }
   }
-  return { kind: 'step', ...base, actions: [act('next', 'Next', true, 'enter'), ask] }
+  return { kind: 'step', ...base, actions: [act('next', 'Next', true, 'enter'), ask, EXPLORE] }
 }
 
 // What "I don't know" shows: the step's own explanation, or the earlier step that teaches its skill
@@ -703,7 +717,7 @@ function missingScreen(c: Ctx, title: string): Screen {
   const body = 'Preparing your lesson…'
   if (c.preparing || !missingSegment(c)) return { kind: 'empty', title, body, ...writingPart(c), actions: [] }
   const why = c.prepError ? `Your lesson could not be written: ${c.prepError}` : 'Your lesson is not written yet.'
-  return { kind: 'empty', title, body, result: { tone: c.prepError ? 'wrong' : 'info', text: why }, actions: [act('retry', 'Write it now', true, 'enter'), PROGRESS] }
+  return { kind: 'empty', title, body, result: { tone: c.prepError ? 'wrong' : 'info', text: why }, actions: [act('retry', 'Write it now', true, 'enter'), PROGRESS, EXPLORE] }
 }
 const writingPart = (c: Ctx) => {
   if (!c.preparing || c.prepSince === undefined) return {}
@@ -716,6 +730,59 @@ const nextActions = (c: Ctx, label: string): Action[] => {
 }
 
 const PROGRESS = act('progress', 'Progress', false, 'g')
+// Explore is open from every lesson screen: any topic, read freely, nothing graded
+const EXPLORE = act('explore', 'Explore', false, 'e')
+
+// The topics on Explore's first screen, numbered as shown: readings written here first, then suggestions
+export const exploreTopics = (x: Explore) => [
+  ...x.library.map(l => ({ topic: l.topic, label: `${l.topic} · ${l.read} of ${l.total} read` })),
+  ...x.suggest.filter(t => !x.library.some(l => l.topic.toLowerCase() === t.toLowerCase())).map(t => ({ topic: t, label: t })),
+].slice(0, 8)
+
+// Explore: free reading, in sections the learner moves through at will. No questions, no grades.
+function exploreScreen(x: Explore, s: LearnerState): Screen {
+  const title = x.reading?.topic ?? x.writing ?? 'Explore'
+  const note = x.note ? { result: { tone: 'info' as const, text: x.note } } : {}
+  if (x.writing) return {
+    kind: 'explore', title,
+    result: { tone: 'wait', text: 'Writing a detailed reading and running its examples on your machine. About a minute.' },
+    actions: [act('home', 'Other topics', false, 'e'), act('back', 'Close', false, 'b')],
+  }
+  const r = x.reading
+  if (!r) {
+    const topics = exploreTopics(x).map(t => t.label)
+    return {
+      kind: 'explore', title,
+      body: 'Open any topic and read as much as you want. Nothing here is a test.',
+      ...(topics.length ? { choices: topics.map((text, i) => ({ n: i + 1, text })) } : {}),
+      input: { placeholder: 'Or type any topic' }, ...note,
+      actions: [act('back', 'Close', false, 'b')],
+    }
+  }
+  const seen = new Set(s.read[r.id] ?? [])
+  if (x.contents) return {
+    kind: 'explore', title, body: `${r.sections.length} sections. Open any of them.`,
+    choices: r.sections.map((sec, i) => ({ n: i + 1, text: `${seen.has(i) ? '✓ ' : ''}${sec.title}` })),
+    actions: [act('read', 'Back to the reading', true, 'b')],
+  }
+  const i = Math.min(x.section, r.sections.length - 1)
+  const sec = r.sections[i]!
+  const last = i === r.sections.length - 1
+  const sources = sec.sources.map(src => `[${src.title}](${src.url})`).join(' · ')
+  return {
+    kind: 'explore', title,
+    progress: { label: `Section ${i + 1} of ${r.sections.length}`, done: i + 1, total: r.sections.length },
+    body: `### ${sec.title}\n\n${sec.body}${sources ? `\n\nSources: ${sources}` : ''}${last && r.related.length ? `\n\nTo explore next: ${r.related.join(' · ')}` : ''}`,
+    ...(sec.code ? { code: { lang: sec.code.lang, source: sec.code.source } } : {}),
+    ...(sec.code?.run ? { output: sec.code.run.out } : {}), ...note,
+    actions: [
+      last ? act('home', 'Other topics', true, 'enter') : act('next', 'Next section', true, 'enter'),
+      ...(i > 0 ? [act('prev', 'Previous', false, 'left')] : []),
+      act('contents', 'Contents', false, 'c'), act('deeper', 'Go deeper', false, 'd'),
+      ...(last ? [] : [act('home', 'Other topics', false, 'e')]), act('back', 'Close', false, 'b'),
+    ],
+  }
+}
 
 function buildScreen(b: Build): Screen {
   const title = 'Build with me'

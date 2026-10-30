@@ -1,4 +1,4 @@
-import type { Course, Segment } from '../hooks/engine/types'
+import type { Course, Segment } from '../engine/types'
 
 export const course: Course = {
   "format": "teachme.course/1",
