@@ -518,3 +518,44 @@ test('a reading for Explore: 3 to 12 sections, each with a source, short enough 
   expect(validateReading(r([sec({ code: { lang: 'python', source: 'print(1)' } }), sec(), sec()])).join(' ')).toMatch(/a python example needs run/)
   expect(validateReading(r([sec({ code: { lang: 'rust', source: 'fn main() {}' } }), sec(), sec()]))).toEqual([])
 })
+
+test('placement: a learner who knows some of it answers quick questions, graded on the spot; lesson 1 starts at the first miss', () => {
+  const pq = (id: string, skill: string) => ({ id, kind: 'mcq' as const, skill, difficulty: 1 as const, title: id, body: `Question ${id}`, choices: [{ text: 'right', why: 'yes' }, { text: 'wrong', why: 'no' }], key: [0] })
+  const course = { ...git.course, placement: [pq('pl1', 'branch-model'), pq('pl2', 'branch-switch'), pq('pl3', 'branch-commit')] }
+  const start = (know: number) => {
+    const l = learner()
+    l.c.course = course
+    l.take({ events: [{ ts: l.c.now, type: 'course', course: 'git' }], effects: [] })
+    l.go({ choose: 1 }); l.go({ choose: know }); l.go({ choose: 1 })
+    return l
+  }
+  // "Nothing yet": no check, straight to the setup and lesson 1
+  const fresh = start(1)
+  expect(fresh.c.state.stage).toBe('setup')
+  expect(fresh.effects).toEqual([{ kind: 'setup' }])
+
+  const l = start(3)
+  expect(l.c.state.stage).toBe('placement')
+  expect(l.effects).toEqual([])
+  expect(screen(l.c)).toMatchObject({ kind: 'question', progress: { label: 'Where to start · 1 of 3' }, body: expect.stringMatching(/Nothing is graded[\s\S]*Question pl1/) })
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['dontknow', 'skipcheck'])
+  l.go({ choose: 1 })
+  l.go({ action: 'dontknow' })
+  l.go({ choose: 2 })
+  expect(l.log.filter(e => e.type === 'placed')).toMatchObject([{ step: 'pl1', ok: true }, { step: 'pl2', ok: false }, { step: 'pl3', ok: false }])
+  expect(screen(l.c)).toMatchObject({ body: 'Your lessons start at **Create and switch**.', lines: [
+    { mark: 'ok', text: 'What a branch is', detail: 'You know this' }, { mark: 'now', text: 'Create and switch', detail: 'Lessons start here' }, { mark: 'todo', text: 'Commit on a branch' },
+  ] })
+  expect(snapshot(l.c)).toMatch(/Placement check: knew What a branch is; missed Create and switch, Commit on a branch\./)
+  // Placement never counts as practice: no evidence, no review cards
+  expect([l.c.state.evidence.length, Object.keys(l.c.state.cards).length]).toEqual([0, 0])
+  l.go({ action: 'continue' })
+  expect(l.c.state.stage).toBe('setup')
+  expect(l.effects[0]).toEqual({ kind: 'setup' })
+
+  // Skip the check: on to the setup, with no results to report
+  const skip = start(2)
+  skip.go({ action: 'skipcheck' })
+  expect(skip.c.state.stage).toBe('setup')
+  expect(snapshot(skip.c)).not.toMatch(/Placement check/)
+})

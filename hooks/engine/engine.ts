@@ -32,7 +32,7 @@ const TASK_KINDS = new Set(['terminal', 'code', 'stage', 'review'])
 
 export const initial = (): LearnerState => ({
   stage: 'intake', intake: {}, setup: {}, tries: {}, hints: {}, result: {}, solved: {}, idk: {}, gated: {}, added: {},
-  evidence: [], mistakes: [], aside: false, asked: {}, migrated: [], notes: [], draft: {}, frame: {}, cards: {}, weak: {}, drills: {}, read: {},
+  evidence: [], mistakes: [], aside: false, asked: {}, migrated: [], notes: [], draft: {}, frame: {}, cards: {}, weak: {}, drills: {}, read: {}, placed: {},
 })
 
 type Outcome = { ts: number; step: string; ok: boolean; skill?: string; hints: number; cls?: MistakeClass; tag?: string; prereq?: string; remedy?: string; review?: string; uses?: string[] }
@@ -125,6 +125,7 @@ export function apply(s: LearnerState, e: LogEvent): LearnerState {
     }
     case 'migrated': return { ...s, migrated: [...s.migrated, { skill: e.skill, state: e.state, evidence: e.evidence, date: e.date }] }
     case 'reset': return forget(s, e)
+    case 'placed': return { ...s, placed: { ...s.placed, [e.step]: e.ok } }
     case 'read': return { ...s, read: { ...s.read, [e.reading]: [...new Set([...(s.read[e.reading] ?? []), e.section])] } }
     case 'answer': {
       const ok = e.verdict === 'right'
@@ -193,6 +194,12 @@ export function current(c: Ctx): At | undefined {
 }
 
 const segmentOrder = (course: Course) => course.phases.flatMap(p => p.segments)
+
+// The intake (and placement check) are done: check the machine, and write lesson 1 for this learner
+function toSetup(c: Ctx, events: LogEvent[]): Out {
+  const first = segmentOrder(c.course!)[0]
+  return { events: [...events, { ts: c.now, type: 'stage', stage: 'setup' }], effects: [{ kind: 'setup' }, ...(first && !c.segments[first] ? [{ kind: 'prepare' as const, after: '', seg: first }] : [])] }
+}
 const resultKey = (c: Ctx, at: At) => at.warm ? `warm${c.state.warm?.n ?? 0}:${at.step.id}` : at.step.id
 const classOf = (c: Ctx, skill: string | undefined, fallback: MistakeClass, tag?: string): MistakeClass =>
   tag && c.state.weak[tag] && c.state.weak[tag]!.status !== 'resolved' ? fallback : classify(c.state, skill, fallback)
@@ -349,10 +356,18 @@ export function press(c: Ctx, p: Press): Out {
     const events: LogEvent[] = [{ ts: c.now, type: 'intake', q: q.id, a }]
     const isLast = c.course.intake.filter(x => s.intake[x.id] === undefined).length === 1
     if (!isLast) return { events, effects: [] }
-    // The answers are in: check the machine, and write lesson 1 for this learner (the course may still be written)
-    events.push({ ts: c.now, type: 'stage', stage: 'setup' })
-    const first = segmentOrder(c.course)[0]
-    return { events, effects: [{ kind: 'setup' }, ...(first && !c.segments[first] ? [{ kind: 'prepare' as const, after: '', seg: first }] : [])] }
+    // A learner who knows some of it first shows what (the course, and its questions, may still be written)
+    const know = q.id === 'know' ? a : s.intake.know
+    if (know !== undefined && know !== 0 && (!c.course.phases.length || c.course.placement?.length)) return { events: [...events, { ts: c.now, type: 'stage', stage: 'placement' }], effects: [] }
+    return toSetup(c, events)
+  }
+  if (s.stage === 'placement') {
+    if (!c.course.phases.length) return NONE
+    const q = c.course.placement?.find(x => s.placed[x.id] === undefined)
+    if (q && 'choose' in p && q.choices?.[p.choose - 1]) return { events: [{ ts: c.now, type: 'placed', step: q.id, ok: !!q.key?.includes(p.choose - 1) }], effects: [] }
+    if (q && action === 'dontknow') return { events: [{ ts: c.now, type: 'placed', step: q.id, ok: false }], effects: [] }
+    if ((q && action === 'skipcheck') || (!q && action === 'continue')) return toSetup(c, [])
+    return NONE
   }
   if (s.stage === 'setup') {
     if (c.busy) return NONE
@@ -533,6 +548,7 @@ export function screen(c: Ctx): Screen {
       body: q.q, choices: q.options.map((text, i) => ({ n: i + 1, text })), input: { placeholder: 'Or say it in your own words' }, actions: [],
     }
   }
+  if (s.stage === 'placement') return placementScreen(c)
   if (s.stage === 'setup') {
     const done = setupDone(c)
     const mark = (st?: string) => st === 'ok' ? 'ok' as const : st === 'running' ? 'run' as const : st === 'failed' ? 'fail' as const : 'todo' as const
@@ -899,6 +915,47 @@ const projectText = (c: Ctx, at: At) => {
   return p ? `Building "${p.title}" together (${p.brief ?? ''}), milestone ${p.segments.indexOf(at.seg.id) + 1} of ${p.segments.length}, in ${p.project}. The system adds the boilerplate and tests; the learner writes the core. Never write their part for them.` : ''
 }
 
+// Placement: the skills they showed they know, and the ones they missed, in course order
+function placed(c: Ctx) {
+  const qs = (c.course?.placement ?? []).filter(q => c.state.placed[q.id] !== undefined && q.skill)
+  const skills = [...new Set(qs.map(q => q.skill!))]
+  const knew = skills.filter(k => qs.filter(q => q.skill === k).every(q => c.state.placed[q.id]))
+  return { knew, missed: skills.filter(k => !knew.includes(k)) }
+}
+
+const placementText = (c: Ctx) => {
+  const { knew, missed } = placed(c)
+  if (!knew.length && !missed.length) return ''
+  const names = (ks: string[]) => ks.map(k => skillTitle(c, k)).join(', ') || 'none'
+  return `Placement check: knew ${names(knew)}; missed ${names(missed)}.`
+}
+
+function placementScreen(c: Ctx): Screen {
+  const course = c.course!
+  const title = course.subject
+  if (!course.phases.length) return { kind: 'intake', title, result: { tone: 'wait', text: c.busy ?? 'Writing your course…' }, actions: [] }
+  const qs = course.placement ?? []
+  const i = qs.findIndex(x => c.state.placed[x.id] === undefined)
+  if (i >= 0) {
+    const q = qs[i]!
+    return {
+      kind: 'question', title, progress: { label: `Where to start · ${i + 1} of ${qs.length}`, done: i, total: qs.length },
+      body: `${i === 0 ? '*A quick check of what you know. Nothing is graded: it only decides where your lessons start.*\n\n' : ''}${q.body}`,
+      ...(q.code ? { code: { lang: q.code.lang, source: q.code.source } } : {}),
+      choices: (q.choices ?? []).map((ch, n) => ({ n: n + 1, text: ch.text, ...(ch.code ? { code: ch.code } : {}) })),
+      actions: [act('dontknow', "I don't know", false, 'd'), act('skipcheck', 'Skip the check', false, 's')],
+    }
+  }
+  const { knew, missed } = placed(c)
+  const start = missed[0] ? skillTitle(c, missed[0]) : undefined
+  return {
+    kind: 'intake', title, progress: { label: 'Where to start', done: qs.length, total: qs.length },
+    body: !qs.length ? 'Your course is ready.' : start ? `Your lessons start at **${start}**.` : 'You knew all of it: your lessons start with the harder parts.',
+    lines: [...knew.map(k => ({ mark: 'ok' as const, text: skillTitle(c, k), detail: 'You know this' })), ...missed.map((k, n) => ({ mark: n === 0 ? 'now' as const : 'todo' as const, text: skillTitle(c, k), detail: n === 0 ? 'Lessons start here' : 'Coming up' }))],
+    actions: [act('continue', 'Continue', true, 'enter')],
+  }
+}
+
 const intakeText = (c: Ctx) => {
   const said = c.course!.intake.filter(q => c.state.intake[q.id] !== undefined).map(q => {
     const a = c.state.intake[q.id]!
@@ -940,6 +997,7 @@ export function snapshot(c: Ctx): string {
     at ? stepText(c, at) : '',
     at ? projectText(c, at) : '',
     intakeText(c),
+    placementText(c),
     levelText(c),
     weak.length ? `Keep sharp: ${weak.join(', ')}.` : '',
     s.notes.length ? `Notes from earlier sessions: ${s.notes.slice(-5).join(' · ')}` : '',
