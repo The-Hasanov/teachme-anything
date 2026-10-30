@@ -34,6 +34,9 @@ back from a new angle until it is fixed for good.
 - **Real practice.** Code is checked by tests, tools by the state they leave, queries by their results, theory by
   predicting, tracing and stepping through. Setup finds the tools a course needs; if any are missing, one click
   on **Install everything** has Teach Me install and configure them for you.
+- **Explore, freely.** Open any topic and read as much as you want, with no questions or tests: press **Explore** (E)
+  in any lesson, or say "explore <topic>". Each reading is detailed and in sections, its examples are run on your
+  machine and every section names its sources. Move through it in any order, or **Go deeper** on a section.
 - **Learn this codebase.** In a repo, say "teach me this codebase" or run `/teachme-anything:teach-codebase`. The
   course is written from its code: its architecture, conventions and tests. You practise on a clone in `practice/`,
   checked by the project's own tests.

@@ -71,6 +71,33 @@ export function untaught(g: Segment, before: readonly Segment[] = []): string[] 
 }
 
 // A build-with-me phase as the author submits it
+const MAX_SECTION_WORDS = 300
+const MAX_EXAMPLE_LINES = 30
+
+// A reading for Explore: detailed sections, each with its sources; runnable examples say exactly what they print
+export function validateReading(r: any): string[] {
+  if (r?.format !== 'teachme.read/1') return ['format must be "teachme.read/1"']
+  const err: string[] = []
+  for (const f of ['id', 'topic']) if (!isStr(r[f])) err.push(`${f} is required`)
+  if (isStr(r.id) && !/^[a-z0-9][a-z0-9-]{0,59}$/.test(r.id)) err.push('id: lowercase letters, digits and dashes')
+  if (!isArr(r.related)) err.push('related must be a list of topics')
+  if (!isArr(r.sections) || r.sections.length < 3 || r.sections.length > 12) return [...err, 'sections: 3 to 12']
+  r.sections.forEach((x: any, i: number) => {
+    const at = `sections[${i}]`
+    if (!isStr(x?.title) || !isStr(x?.body)) { err.push(`${at}: title and body`); return }
+    if (words(x.body) > MAX_SECTION_WORDS) err.push(`${at}: body over ${MAX_SECTION_WORDS} words; split it into two sections`)
+    if (!isArr(x.sources) || !x.sources.length) err.push(`${at}: name at least one source`)
+    for (const src of isArr(x.sources) ? x.sources : []) if (!isStr(src?.title) || !/^https:\/\/\S+$/.test(src?.url ?? '')) err.push(`${at}: a source is {title, url} with an https url`)
+    if (x.code) {
+      if (!isStr(x.code.lang) || !isStr(x.code.source)) err.push(`${at}.code: lang and source`)
+      else if (x.code.source.split('\n').length > MAX_EXAMPLE_LINES) err.push(`${at}.code: over ${MAX_EXAMPLE_LINES} lines`)
+      if (RUNNABLE.includes(x.code.lang) && !x.code.run) err.push(`${at}.code: a ${x.code.lang} example needs run {file, argv, out}`)
+      if (x.code.run && (!isStr(x.code.run.file) || !isArr(x.code.run.argv) || typeof x.code.run.out !== 'string' || outside(x.code.run.file))) err.push(`${at}.code.run: file (relative), argv and out`)
+    }
+  })
+  return err
+}
+
 // A re-plan replaces only what comes after the phase of the segment being written; projects stay
 export function replanErrors(course: Course, phases: any, segId: string): string[] {
   if (!isArr(phases)) return ['phases must be the whole new list of phases']

@@ -87,12 +87,12 @@ test('a trace accepts any choice with the right text', () => {
 test('stepper: frame by frame, back a frame, and the learner may skip ahead', () => {
   const l = at(bigo.course, bigo.bigo1, 'o2')
   expect(l.sc().frame).toMatchObject({ i: 0, n: 6, note: 'Start at the first item. Is 4 the target?' })
-  expect(l.sc().actions.map(a => a.id)).toEqual(['frame-next', 'next', 'ask'])
+  expect(l.sc().actions.map(a => a.id)).toEqual(['frame-next', 'next', 'ask', 'explore'])
   l.go({ action: 'frame-next' }); l.go({ action: 'frame-next' }); l.go({ action: 'frame-prev' })
   expect(l.sc().frame?.i).toBe(1)
   for (let i = 0; i < 6; i++) l.go({ action: 'frame-next' })
   expect(l.sc().frame?.i).toBe(5)
-  expect(l.sc().actions.map(a => a.id)).toEqual(['next', 'frame-prev', 'ask'])
+  expect(l.sc().actions.map(a => a.id)).toEqual(['next', 'frame-prev', 'ask', 'explore'])
   expect(l.sc().output).toBe('5')
   l.go({ action: 'next' })
   expect(l.sc().title).toBe('The worst case')
@@ -122,6 +122,6 @@ test('#15 a predict step with a run output but no choices is refused, and one ca
 
   const l = at(bigo.course, seg, 'o4')
   expect(l.sc().output).toBe('6')
-  expect(l.sc().actions.map(a => a.id)).toEqual(['next', 'ask'])
+  expect(l.sc().actions.map(a => a.id)).toEqual(['next', 'ask', 'explore'])
   expect(l.go({ action: 'next' }).events.map(e => e.type)).toEqual(['enter'])
 })

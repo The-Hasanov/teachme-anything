@@ -5,7 +5,7 @@ import { apply, checked, current, dashboard, initial, press, replay, screen, sna
 import type { Ctx, Out } from '../hooks/engine/engine'
 import { skillState } from '../hooks/engine/mastery'
 import { stats } from '../hooks/engine/stats'
-import { replanErrors, untaught, validateCourse, validateSegment } from '../hooks/engine/schema'
+import { replanErrors, untaught, validateCourse, validateReading, validateSegment } from '../hooks/engine/schema'
 import type { LogEvent, Press } from '../hooks/engine/types'
 
 const T0 = Date.parse('2026-10-27T10:00:00Z')
@@ -103,7 +103,7 @@ test('failing the same idea twice gives a new angle, at most two drills, then th
   const third = l.take(checked(l.c, 'b3', onMain))
   expect(third.events[0]).not.toHaveProperty('branch')
   expect(third.effects).toEqual([])
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'hint', 'skip', 'ask'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'hint', 'skip', 'ask', 'explore'])
   l.go({ action: 'skip' })
   expect(l.step()).toBe('b4')
   expect(l.c.state.weak['branch-not-switch']).toMatchObject({ count: 3, status: 'open' })
@@ -185,11 +185,11 @@ test('hints wait for a real attempt, an anticipated miss branches to a drill and
   l.go({ action: 'next' }); l.go({ choose: 2 }); l.go({ action: 'next' })
   expect(l.step()).toBe('b3')
   expect(l.go({ action: 'hint' }).events).toEqual([])
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'ask'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'ask', 'explore'])
   expect(l.go({ action: 'check' }).effects).toEqual([{ kind: 'check', step: 'b3' }])
   l.take(checked(l.c, 'b3', [{ id: 'exists', ok: true, got: 'abc' }, { id: 'on-branch', ok: false, got: 'main' }]))
   expect(screen(l.c).result?.text).toMatch(/still on main/)
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'next', 'hint', 'ask'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'next', 'hint', 'ask', 'explore'])
   l.go({ action: 'hint' })
   expect(screen(l.c).hint).toEqual({ level: 1, text: 'One command can create a branch and move you onto it.' })
   l.go({ action: 'next' })
@@ -302,16 +302,16 @@ test('after a finished segment, Continue goes to the next one or waits for it, n
   l.toLesson()
   l.take({ events: [{ ts: l.c.now, type: 'enter', seg: 'branches-1', step: git.branches1.steps.length - 1 }, { ts: l.c.now, type: 'stage', stage: 'recap' }], effects: [] })
   expect(screen(l.c).result).toMatchObject({ tone: 'info', text: expect.stringMatching(/not written yet/) })
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['retry', 'curriculum', 'progress'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['retry', 'curriculum', 'progress', 'explore'])
   expect(l.go({ action: 'retry' }).effects).toEqual([{ kind: 'prepare', after: 'branches-1' }])
   l.go({ action: 'curriculum' })
   expect(l.go({ action: 'start' }).events).toEqual([])
   l.c.preparing = true
   expect(screen(l.c)).toMatchObject({ kind: 'curriculum', result: { tone: 'wait' } })
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['progress'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['progress', 'explore'])
   l.c.segments['merge-1'] = { ...git.branches1, id: 'merge-1' }
   l.c.preparing = false
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['start', 'progress'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['start', 'progress', 'explore'])
   l.go({ action: 'start' })
   expect(l.c.state).toMatchObject({ stage: 'lesson', pos: { seg: 'merge-1', step: 0 } })
   expect(l.c.state.done).toBeUndefined()
@@ -327,7 +327,7 @@ test('#11 #12 the next lesson shows seconds while written, says when it is slow,
   expect(screen(l.c).result?.text).toMatch(/200s so far\. Taking longer than usual/)
   Object.assign(l.c, { preparing: false, prepSince: undefined, prepError: 'b3: probe tests fails on the reference solution (got "cargo: command not found")' })
   expect(screen(l.c).result).toEqual({ tone: 'wrong', text: 'Your next lesson could not be written: b3: probe tests fails on the reference solution (got "cargo: command not found")' })
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['retry', 'curriculum', 'progress'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['retry', 'curriculum', 'progress', 'explore'])
 })
 
 test('#18 a lesson whose segment is missing says why and offers Write it now, which prepares that segment', () => {
@@ -337,7 +337,7 @@ test('#18 a lesson whose segment is missing says why and offers Write it now, wh
   expect(screen(l.c)).toMatchObject({ kind: 'empty', result: { tone: 'info', text: 'Your lesson is not written yet.' } })
   l.c.prepError = 'the author stopped without submitting it and gave no reason'
   expect(screen(l.c).result).toEqual({ tone: 'wrong', text: 'Your lesson could not be written: the author stopped without submitting it and gave no reason' })
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['retry', 'progress'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['retry', 'progress', 'explore'])
   expect(press(l.c, { action: 'retry' }).effects).toEqual([{ kind: 'prepare', after: '', seg: 'branches-1' }])
   Object.assign(l.c, { preparing: true, prepSince: l.c.now - 5_000, prepError: undefined })
   expect(screen(l.c)).toMatchObject({ actions: [], result: { tone: 'wait', text: expect.stringMatching(/5s so far\.$/) } })
@@ -415,7 +415,7 @@ test('"I don\'t know" teaches the idea, brings the skill back, and is neither ri
   expect(sc.result?.tone).toBe('info')
   expect(sc.result?.text).toContain(step.more ?? git.branches1.steps[0]!.body)
   expect(sc.choices?.every(c => !c.mark)).toBe(true)
-  expect(sc.actions.map(a => a.id)).toEqual(['next', 'ask'])
+  expect(sc.actions.map(a => a.id)).toEqual(['next', 'ask', 'explore'])
   expect(l.c.state).toMatchObject({ evidence: [], mistakes: [], weak: { [`skill:${step.skill}`]: { cls: 'prereq', status: 'open' } } })
   expect(stats(git.course, l.c.state, l.c.now).skills.find(k => k.id === step.skill)?.idk).toBe(1)
   expect(snapshot(l.c)).toMatch(/do not know this one/)
@@ -505,4 +505,16 @@ test('a re-plan changes only what comes after the phase being written, and keeps
   expect(replanErrors(course, [later, project], first).join(' ')).toMatch(/phases\[0\] must stay exactly as it is/)
   expect(replanErrors(course, [c.phases[0], { ...later, segments: [first] }, project], first).join(' ')).toMatch(/in more than one phase/)
   expect(replanErrors(course, [c.phases[0], { ...later, skills: ['nope'] }, project], first).join(' ')).toMatch(/unknown skill nope/)
+})
+
+test('a reading for Explore: 3 to 12 sections, each with a source, short enough to read, runnable examples that say their output', () => {
+  const sec = (over = {}) => ({ title: 'T', body: 'Some words.', sources: [{ title: 'Docs', url: 'https://docs.python.org/3/' }], ...over })
+  const r = (sections: object[], over = {}) => ({ format: 'teachme.read/1', id: 'py-lists', topic: 'Python lists', related: ['Tuples'], sections, ...over })
+  expect(validateReading(r([sec(), sec(), sec()]))).toEqual([])
+  expect(validateReading(r([sec(), sec()]))).toEqual(['sections: 3 to 12'])
+  expect(validateReading(r([sec(), sec(), sec()], { id: 'Py Lists' }))).toEqual(['id: lowercase letters, digits and dashes'])
+  expect(validateReading(r([sec({ body: 'word '.repeat(301) }), sec(), sec()])).join(' ')).toMatch(/over 300 words; split it/)
+  expect(validateReading(r([sec({ sources: [{ title: 'Docs', url: 'http://example.com' }] }), sec(), sec()])).join(' ')).toMatch(/https url/)
+  expect(validateReading(r([sec({ code: { lang: 'python', source: 'print(1)' } }), sec(), sec()])).join(' ')).toMatch(/a python example needs run/)
+  expect(validateReading(r([sec({ code: { lang: 'rust', source: 'fn main() {}' } }), sec(), sec()]))).toEqual([])
 })

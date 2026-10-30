@@ -76,7 +76,7 @@
   const output = (s) => String(s).split('\n').map(l => OUT_ERR.test(l) ? `<span class="t-err">${esc(l)}</span>` : OUT_WARN.test(l) ? `<span class="t-warn">${esc(l)}</span>` : esc(l)).join('\n');
   const icon = (name, label) => `<span class="codicon codicon-${name}" ${label ? `aria-label="${esc(label)}" role="img"` : 'aria-hidden="true"'}></span>`;
   const MARK = { ok: ['pass', 'done'], todo: ['circle-large-outline', 'to do'], fail: ['warning', 'needs attention'], run: ['loading', 'running'], now: ['circle-large-filled', 'current'] };
-  const KEY = { enter: 'Enter', h: 'H', a: 'A', b: 'B', g: 'G', p: 'P', u: 'U', s: 'S', d: 'D', left: '←' };
+  const KEY = { enter: 'Enter', h: 'H', a: 'A', b: 'B', g: 'G', p: 'P', u: 'U', s: 'S', d: 'D', e: 'E', c: 'C', left: '←' };
   const markIcon = (m) => m === 'right' ? icon('pass', 'right') : m === 'wrong' ? icon('close', 'not right') : '';
 
   function send(press) {

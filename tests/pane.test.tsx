@@ -269,7 +269,7 @@ test('a subject with no course: the intake runs while the author writes the cour
   expect(await replan([...course.phases, deploy])).toMatchObject({ ok: true })
   expect(JSON.parse(files[`${ROOT}/.teachme/course.json`]!).phases.map((p: { id: string }) => p.id)).toEqual(['basics', 'deploy'])
   expect(Object.entries(files).find(([f]) => f.endsWith('/.teachme/metrics.jsonl'))?.[1]).toMatch(/"kind":"segment-rejected","seg":"basics-1","errors":\["[^"]*skill pods is tested before/)
-  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Start Pods', 'Progress', 'Open in VS Code'])
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Start Pods', 'Progress', 'Explore', 'Open in VS Code'])
   await ui.unmount()
 })
 
@@ -375,6 +375,91 @@ test('a whole Big-O lesson and a Python code task in the terminal pane, buttons 
   expect(progress).toMatch(/## Your answers\n\n\d+ answers/)
   expect(progress).toMatch(/`growth-order` \| Which grows faster \| demonstrated/)
   expect(progress).toMatch(/halving n until 1/)
+})
+
+const reading = {
+  format: 'teachme.read/1', id: 'rust-ownership', topic: 'Rust ownership', related: ['Borrowing', 'Lifetimes', 'Smart pointers'],
+  sections: [
+    { title: 'One owner', body: 'Every value has exactly **one owner**.', sources: [{ title: 'The Rust Book: ownership', url: 'https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html' }] },
+    { title: 'Moves', body: 'Assigning a `String` **moves** it.', code: { lang: 'python', source: 'print("moved")', run: { file: 'moves.py', argv: ['python', 'moves.py'], out: 'moved' } }, sources: [{ title: 'Move semantics', url: 'https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html#variables-and-data-interacting-with-move' }] },
+    { title: 'Drop', body: 'A value is **dropped** when its owner goes out of scope.', sources: [{ title: 'Drop', url: 'https://doc.rust-lang.org/std/ops/trait.Drop.html' }] },
+  ],
+}
+
+test('Explore with no course: open a topic, the reading is checked before it is shown, then read it freely, nothing graded', async ($, on) => {
+  const { files, net, calls } = world(on, argv => argv[0] === 'python' && argv[1] === 'moves.py' ? { exitCode: 0, stdout: 'moved\n' } : undefined)
+  const { prompts, relay, end } = agents($, on)
+  const toasts: string[] = []
+  on('ui.toast', (_, e) => { toasts.push((e as { text: string }).text); return { value: undefined } })
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const texts = async () => (await Promise.all(['Text', 'Markdown', 'Code'].map(type => ui.findAll({ type } as never)))).flat().map(t => (t as { text?: string }).text).join(' | ')
+  const buttons = async () => (await ui.findAll({ type: 'Button' })).map(b => b.text)
+
+  expect(JSON.parse((await $.tool.call({ tool: 'mcp__teachme-anything__explore', topic: 'Rust ownership' } as never)).result as string)).toMatchObject({ ok: true })
+  await relay()
+  expect(prompts()[0]).toMatch(/reading on "Rust ownership"[\s\S]*No questions, no tasks[\s\S]*Sources: every section[\s\S]*no course here/)
+  expect(await texts()).toMatch(/Rust ownership[\s\S]*Writing a detailed reading/)
+
+  const submit = async (r: unknown) => JSON.parse((await $.tool.call({ tool: 'mcp__teachme-anything__submit_reading', reading: r } as never)).result as string)
+  const [one, two, three] = reading.sections
+  expect((await submit({ ...reading, sections: [{ ...one, sources: [] }, two, three] })).errors.join(' ')).toMatch(/sections\[0\]: name at least one source/)
+  expect((await submit({ ...reading, sections: [one, { ...two, code: { ...two!.code, run: { ...two!.code!.run, out: 'copied' } } }, three] })).errors.join(' ')).toMatch(/section 2: the example prints "moved", the step says "copied"/)
+  net.fetch = url => url.includes('trait.Drop') ? { status: 404 } : { status: 200 }
+  expect((await submit(reading)).errors.join(' ')).toMatch(/source https:\/\/doc.rust-lang.org\/std\/ops\/trait.Drop.html answers "not found"/)
+  net.fetch = () => ({ status: 200 })
+  expect(await submit(reading)).toMatchObject({ ok: true, id: 'rust-ownership' })
+  expect(files[`${ROOT}/.teachme/read/rust-ownership.json`]).toContain('"teachme.read/1"')
+
+  // Read in any order: next, contents, a section by number, back, deeper
+  expect(await texts()).toMatch(/Section 1 of 3[\s\S]*One owner[\s\S]*The Rust Book: ownership/)
+  expect(await buttons()).toEqual(['Next section', 'Contents', 'Go deeper', 'Other topics', 'Close', 'Open in VS Code'])
+  await ui.press({ key: 'act-next' })
+  expect(await texts()).toMatch(/Section 2 of 3[\s\S]*Moves[\s\S]*moved/)
+  await ui.press({ key: 'act-contents' })
+  expect(await buttons()).toEqual(['✓ One owner', '✓ Moves', 'Drop', 'Back to the reading', 'Open in VS Code'])
+  await ui.press({ key: 'choose-3' })
+  expect(await texts()).toMatch(/Section 3 of 3[\s\S]*Drop[\s\S]*To explore next: Borrowing · Lifetimes · Smart pointers/)
+  expect(await buttons()).toEqual(['Other topics', 'Previous', 'Contents', 'Go deeper', 'Close', 'Open in VS Code'])
+  await ui.press({ key: 'act-deeper' })
+  await relay()
+  expect(prompts()[1]).toMatch(/goes deeper into "Drop", a section of the reading "Rust ownership"/)
+
+  // Closing leaves the deeper reading being written; a toast says when it is ready, and the list shows both
+  await ui.press({ key: 'act-back' })
+  expect(await texts()).toMatch(/say "teach me <subject>"/i)
+  expect(await submit({ ...reading, id: 'rust-drop', topic: 'Rust ownership: Drop' })).toMatchObject({ ok: true })
+  expect(toasts).toEqual([expect.stringMatching(/"Rust ownership: Drop" is ready in Explore/)])
+  await $.tool.call({ tool: 'mcp__teachme-anything__explore' } as never)
+  expect(await buttons()).toEqual(['Rust ownership · 3 of 3 read', 'Rust ownership: Drop · 0 of 3 read', 'Borrowing', 'Lifetimes', 'Smart pointers', 'Close', 'Open in VS Code'])
+
+  // A reading whose author gives up says so, and the learner can ask again
+  await ui.press({ key: 'choose-4' })
+  await relay()
+  await end('a3', 'I could not find sources.')
+  expect(await texts()).toMatch(/The reading on "Lifetimes" did not work this time/)
+
+  const log = Object.entries(files).find(([f]) => f.includes('/.teachme/log/'))?.[1] ?? ''
+  expect(log.trim().split('\n').map(l => JSON.parse(l)).map(e => `${e.type}:${e.reading}:${e.section}`)).toEqual(['read:rust-ownership:0', 'read:rust-ownership:1', 'read:rust-ownership:2'])
+  expect(calls.model).toBe(0)
+  await ui.unmount()
+})
+
+test('Explore from a lesson opens on the step\'s skill, and Close returns to the same step', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  const { prompts, relay } = agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await seed($, w.files, python)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  for (const key of ['choose-1', 'choose-1', 'choose-1', 'act-continue', 'act-start']) await ui.press({ key })
+  const title = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text).join(' | ')
+  expect(await title()).toMatch(/A list, by position/)
+  await ui.press({ key: 'act-explore' })
+  await relay()
+  expect(prompts()).toEqual([expect.stringMatching(/reading on "Lists, indexes and slices"[\s\S]*Pitch it to this learner/)])
+  await ui.press({ key: 'act-back' })
+  expect(await title()).toMatch(/A list, by position/)
+  await ui.unmount()
 })
 
 test('a Python code task in the terminal pane: where to work, a mistake caught, then solved', async ($, on) => {

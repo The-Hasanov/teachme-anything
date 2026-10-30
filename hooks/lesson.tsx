@@ -3,19 +3,19 @@ import { atom, read, update } from 'claude-code'
 import * as example from './host/example'
 import type { AgentSpawnArgs, AgentSpawnResult, EngineInterface, Register } from 'claude-code'
 
-import { checked, current, dashboard, level, press, screen, setupDone, snapshot, taught, withProject } from './engine/engine'
+import { checked, current, dashboard, exploreTopics, level, press, screen, setupDone, snapshot, taught, withProject } from './engine/engine'
 import type { Ctx, Out } from './engine/engine'
 import { replay } from './engine/engine'
-import type { Build, Course, Effect, LogEvent, Line, Phase, Press, ProjectPick, Requirement, Screen, Segment } from './engine/types'
+import type { Build, Course, Effect, Explore, LogEvent, Line, Phase, Press, ProjectPick, Reading, Requirement, Screen, Segment } from './engine/types'
 import { skillState } from './engine/mastery'
 import { migrate } from './engine/migrate'
-import { milestoneErrors, replanErrors, untaught, validateCourse, validateProjectPhase, validateSegment } from './engine/schema'
+import { milestoneErrors, replanErrors, untaught, validateCourse, validateProjectPhase, validateReading, validateSegment } from './engine/schema'
 import { MANUAL, backUpScaffold, installPlan, isStaleScaffold, isTool, output, probeEnv, removeLesson, runCommand, runProbes, scaffold } from './host/adapters'
 import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
 import { DIR, append, hasCourse, install, load, newLog, progressMarkdown } from './host/store'
 import type { Log } from './host/store'
-import { AUTHOR_MODEL, AUTHOR_PROMPT, DOCTOR_PROMPT, GENERIC_INTAKE, SETUP_ADAPTERS, authorTask, courseTask, diagnose, projectTask } from './host/teacher'
+import { AUTHOR_MODEL, AUTHOR_PROMPT, DOCTOR_PROMPT, GENERIC_INTAKE, SETUP_ADAPTERS, authorTask, courseTask, diagnose, projectTask, readingTask } from './host/teacher'
 import { verifySegment } from './host/verify'
 import { newVsCode, sendView, tick } from './host/vscode'
 import type { LayoutOp, VsCode } from './host/vscode'
@@ -38,7 +38,7 @@ const curveRows = (points: number[]) => {
 const OUT_ERR = /^(Traceback|\s+File "|\w*(Error|Exception)\b|error[:[]|fatal:|ERROR\b|FAIL\b)/
 const OUT_WARN = /^(warning[:[]|Warning\b|WARN\b|hint:)/i
 const TOOL = (name: string) => `mcp__${PLUGIN}__${name}`
-const OWN_TOOLS = new Set(['start_course', 'snapshot', 'progress', 'submit_segment', 'submit_course', 'build_with_me', 'submit_project'].map(TOOL))
+const OWN_TOOLS = new Set(['start_course', 'snapshot', 'progress', 'submit_segment', 'submit_course', 'build_with_me', 'submit_project', 'explore', 'submit_reading'].map(TOOL))
 
 const view = atom({ plugin: 'teachme-anything', key: 'screen' } as const, null, { shape: 'screen-1' })
 
@@ -62,6 +62,10 @@ type Session = {
   // The learner pressed Install everything: the doctor's calls run without a prompt until it ends
   installApproved?: boolean
   build?: Build & { open: boolean; agent?: string }
+  explore?: Explore
+  // The author writing a reading for Explore; it runs on when Explore is closed
+  writer?: { topic: string; agent: string }
+  readings?: Record<string, Reading>
   lastProbes?: { id: string; ok: boolean; got: string }[]
   vscode?: VsCode
   reveal?: Reveal
@@ -80,7 +84,7 @@ async function deviceOf($: EngineInterface) {
 
 async function ctx($: EngineInterface): Promise<Ctx> {
   const s = sess!
-  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, preparing: !!s.preparing, prepSince: s.preparing ? s.prepSince : undefined, prepError: s.prepError, build: s.build?.open ? s.build : undefined, asked: askedHere(s) }
+  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, preparing: !!s.preparing, prepSince: s.preparing ? s.prepSince : undefined, prepError: s.prepError, build: s.build?.open ? s.build : undefined, explore: s.explore, asked: askedHere(s) }
 }
 
 const askedHere = (s: Session) => {
@@ -148,6 +152,7 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
   const s = sess
   if (!s) return
   const t0 = await $.clock.now()
+  if (s.explore) return explorePress($, p)
   if (s.build?.open) return buildPress($, p)
   if ('action' in p && p.action === 'tutor') return void await lessonTutor($)
   if ('action' in p && p.action === 'progress') { s.progress = true; return refresh($) }
@@ -171,7 +176,7 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
 }
 
 // The effects run() handles. tests/invariants checks that the engine asks for no other; run() throws on one it can't do.
-export const HANDLED_EFFECTS: readonly Effect['kind'][] = ['check', 'escalate', 'setup', 'heal', 'practice', 'prepare', 'remedy', 'ask', 'restart']
+export const HANDLED_EFFECTS: readonly Effect['kind'][] = ['check', 'escalate', 'setup', 'heal', 'practice', 'prepare', 'remedy', 'ask', 'restart', 'explore']
 
 async function run($: EngineInterface, fx: Effect) {
   const s = sess!
@@ -206,6 +211,7 @@ async function run($: EngineInterface, fx: Effect) {
     if (fx.kind === 'remedy') return remedy($, fx.tag, fx.skill)
     if (fx.kind === 'ask') return ask($, fx.question)
     if (fx.kind === 'restart') return restartPractice($, fx.segs, fx.fresh)
+    if (fx.kind === 'explore') return void await openExplore($, fx.topic)
     throw new Error('no handler for this effect')
   } catch (err) {
     s.busy = undefined
@@ -532,6 +538,141 @@ async function generateCourse($: EngineInterface, subject: string, root: string,
   return { ok: true, course: subject, generating: true, ...(background ? { writtenFor: background } : {}), next: `The lesson view asks 3 questions while a course is written for this learner (${codebase ? 'about 3 minutes' : 'about a minute'}). Say one short line; nothing else to do.` }
 }
 
+// Explore: any topic, read freely from any screen. Readings are written on demand, kept in .teachme/read/, and never
+// graded: the only thing logged is which sections were opened.
+async function readings($: EngineInterface, s: Session) {
+  if (s.readings) return s.readings
+  const all: Record<string, Reading> = {}
+  for (const f of await $.fs.list(`${s.root}/${DIR}/read`).catch(() => [])) {
+    if (f.kind !== 'file' || !f.name.endsWith('.json')) continue
+    const r = await $.fs.read(`${s.root}/${DIR}/read/${f.name}`).then(JSON.parse).catch(() => undefined)
+    if (r && !validateReading(r).length) all[r.id] = r
+  }
+  return (s.readings = all)
+}
+
+function exploreHome(s: Session, all: Record<string, Reading>, note?: string): Explore {
+  const library = Object.values(all).map(r => ({ id: r.id, topic: r.topic, read: s.state.read[r.id]?.length ?? 0, total: r.sections.length }))
+  // Topics the readings point to next, then the course's own skills
+  const suggest = [...new Set([...Object.values(all).flatMap(r => r.related), ...(s.course?.skills.map(k => k.title) ?? [])])]
+  return { section: 0, library, suggest, ...(note ? { note } : {}) }
+}
+
+async function openExplore($: EngineInterface, topic?: string) {
+  const root = await $.session.cwd()
+  if (!sess && await hasCourse($, root)) await open($, root)
+  if (!sess) {
+    const env = await probeEnvCached($)
+    const device = await deviceOf($)
+    sess = { root, os: env.os, segments: {}, state: replay([]), log: newLog(root, device), metrics: newLog(root, device, 'metrics'), welcome: false, env, vscode: vsCodeFor($, root) }
+  }
+  const s = sess
+  if (!s.explore) s.explore = exploreHome(s, await readings($, s))
+  await $.ui.open({ id: PANE, title: 'Explore' })
+  if (topic?.trim()) await showTopic($, topic.trim())
+  else await refresh($)
+  return { ok: true, next: 'The lesson view shows the reading. Say one short line; nothing else to do.' }
+}
+
+async function showSection($: EngineInterface, r: Reading, section: number) {
+  const s = sess!
+  s.explore = { ...s.explore!, reading: r, section, contents: false, writing: undefined, note: undefined }
+  await commit($, { events: [{ ts: await $.clock.now(), type: 'read', reading: r.id, section }], effects: [] })
+}
+
+const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
+
+// An existing reading opens at its first unread section; a new topic is written first (one at a time)
+async function showTopic($: EngineInterface, topic: string, deeper?: { reading: string; section: string }) {
+  const s = sess!
+  const all = await readings($, s)
+  const found = Object.values(all).find(r => r.topic.toLowerCase() === topic.toLowerCase() || r.id === slug(topic))
+  if (found && !deeper) {
+    const seen = new Set(s.state.read[found.id] ?? [])
+    const next = found.sections.findIndex((_, i) => !seen.has(i))
+    return showSection($, found, next < 0 ? 0 : next)
+  }
+  if (s.writer) {
+    s.explore = { ...s.explore!, note: `"${s.writer.topic}" is being written. It opens when it is ready; then ask for the next one.` }
+    return refresh($)
+  }
+  s.writer = { topic, agent: RELAYING }
+  s.explore = { ...exploreHome(s, all), writing: topic }
+  await refresh($)
+  const env = s.env ?? await probeEnvCached($)
+  const tools = Object.entries(env.tools).filter(([, v]) => v).map(([k, v]) => `${k} (${v})`).join(', ')
+  await spawnAgent($, {
+    subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: `Teach Me: a reading on ${topic}`,
+    prompt: readingTask(topic, `${env.os}; ${tools || 'no developer tools found'}`, s.course ? snapshot(await ctx($)) : undefined, deeper),
+  }, async r => {
+    if (!s.writer) return
+    if (!r.deny && r.agentId) { s.writer.agent = r.agentId; return }
+    s.writer = undefined
+    if (s.explore) s.explore = { ...s.explore, writing: undefined, note: `The reading could not start: ${r.deny ?? 'no agent'}` }
+    await refresh($)
+  })
+  void metric($, { kind: 'reading', topic, ...(deeper ? { deeper: true } : {}) })
+}
+
+async function explorePress($: EngineInterface, p: Press) {
+  const s = sess!
+  const x = s.explore!
+  const action = 'action' in p ? p.action : undefined
+  // Close and Other topics leave a reading being written to finish: Explore lists it, and a toast says so
+  if (action === 'back') { s.explore = undefined; return refresh($) }
+  if (action === 'home') { s.explore = exploreHome(s, await readings($, s), x.writing ? `"${x.writing}" is listed here when it is ready.` : undefined); return refresh($) }
+  const r = x.reading
+  if (!r) {
+    const pick = 'choose' in p ? exploreTopics(x)[p.choose - 1]?.topic : 'text' in p ? p.text.trim().slice(0, 120) : undefined
+    return pick ? showTopic($, pick) : undefined
+  }
+  if (x.contents && 'choose' in p && r.sections[p.choose - 1]) return showSection($, r, p.choose - 1)
+  if (action === 'read') { s.explore = { ...x, contents: false }; return refresh($) }
+  if (action === 'contents') { s.explore = { ...x, contents: true }; return refresh($) }
+  if (action === 'next' && x.section + 1 < r.sections.length) return showSection($, r, x.section + 1)
+  if (action === 'prev' && x.section > 0) return showSection($, r, x.section - 1)
+  if (action === 'deeper') {
+    const sec = r.sections[x.section]!
+    return showTopic($, `${r.topic}: ${sec.title}`, { reading: r.topic, section: sec.title })
+  }
+}
+
+// A source that answers 404 or 410 does not exist. Anything else (no network, a site that refuses HEAD) is let through.
+async function deadSources($: EngineInterface, r: Reading) {
+  const urls = [...new Set(r.sections.flatMap(x => x.sources.map(src => src.url)))]
+  const dead = await Promise.all(urls.map(async url => {
+    const res = await $.http.fetch(url, { method: 'HEAD' }).catch(() => undefined) as { status?: number } | undefined
+    return res && [404, 410].includes(res.status ?? 0) ? url : undefined
+  }))
+  return dead.filter((u): u is string => !!u).map(u => `source ${u} answers "not found": use a page that exists`)
+}
+
+async function submitReading($: EngineInterface, input: { reading: unknown }) {
+  const s = sess
+  if (!s) return { ok: false, errors: ['no Teach Me session in this folder'] }
+  const r = input.reading as Reading
+  const errors = validateReading(r)
+  if (errors.length) return { ok: false, errors }
+  const examples: Segment = {
+    format: 'teachme.script/1', id: r.id, title: r.topic, skills: [],
+    steps: r.sections.flatMap((x, i) => x.code?.run ? [{ id: `section ${i + 1}`, kind: 'worked' as const, difficulty: 1 as const, title: x.title, body: '', code: x.code }] : []),
+  }
+  const v = await verifySegment($, examples, s.os)
+  const bad = [...v.errors, ...await deadSources($, r)]
+  if (bad.length) { void metric($, { kind: 'reading-rejected', id: r.id, errors: bad.slice(0, 3) }); return { ok: false, errors: bad } }
+  await $.fs.write(`${s.root}/${DIR}/read/${r.id}.json`, JSON.stringify(r, null, 2) + '\n')
+  ;(await readings($, s))[r.id] = r
+  void metric($, { kind: 'reading-written', id: r.id, sections: r.sections.length, verifyMs: v.ms })
+  s.writer = undefined
+  if (s.explore?.writing) await showSection($, r, 0)
+  else {
+    if (s.explore && !s.explore.reading) s.explore = exploreHome(s, s.readings!, `"${r.topic}" is ready.`)
+    void $.ui.toast(`Teach Me: "${r.topic}" is ready in Explore (key E).`)
+    await refresh($)
+  }
+  return { ok: true, id: r.id, next: 'The reading is in. Stop now.' }
+}
+
 async function buildWithMe($: EngineInterface, a: { suggestions?: ProjectPick[]; idea?: string; subject?: string }) {
   const root = await $.session.cwd()
   if (!sess && await hasCourse($, root)) await open($, root)
@@ -689,6 +830,16 @@ export async function lessonRegister($: EngineInterface) {
     },
   })
   await $.tool.register({
+    name: 'explore', isDeferred: false,
+    description: 'Teach Me Explore: open a detailed reading on any topic in the lesson view and pane, to study freely with no questions or tests ("explain X in depth", "I want to read about X", "explore X"). Readings are written on demand, with examples run on this machine and sources. Works with or without a course here.',
+    inputSchema: { type: 'object', properties: { topic: { type: 'string', description: 'The topic, as the learner said it. Leave it out to open the list of topics.' } } },
+  })
+  await $.tool.register({
+    name: 'submit_reading',
+    description: 'Teach Me author: submit a reading for Explore (teachme.read/1). It is validated, its examples are run and its sources checked before it is kept. Returns {ok} or {errors}.',
+    inputSchema: { type: 'object', properties: { reading: { type: 'object' } }, required: ['reading'] },
+  })
+  await $.tool.register({
     name: 'submit_project',
     description: 'Teach Me author: submit a build-with-me project as a phase (id, title, brief, project folder, skills, milestone ids) with its first milestone segment. Validated and checked; returns {ok} or {errors}.',
     inputSchema: { type: 'object', properties: { phase: { type: 'object' }, segment: { type: 'object' }, newSkills: { type: 'array', items: { type: 'object' } } }, required: ['phase', 'segment'] },
@@ -703,7 +854,7 @@ export async function lessonRegister($: EngineInterface) {
     description: 'Teach Me author: submit a new course (teachme.course/1) for the subject the learner asked for. It is validated; returns {ok, next} or {errors}.',
     inputSchema: { type: 'object', properties: { course: { type: 'object' } }, required: ['course'] },
   })
-  await $.agent.register({ name: 'author', description: 'Writes Teach Me courses and lesson segments for one learner.', prompt: AUTHOR_PROMPT, tools: ['Read', 'Glob', 'Grep', TOOL('submit_course'), TOOL('submit_segment'), TOOL('submit_project')], model: AUTHOR_MODEL })
+  await $.agent.register({ name: 'author', description: 'Writes Teach Me courses and lesson segments for one learner.', prompt: AUTHOR_PROMPT, tools: ['Read', 'Glob', 'Grep', TOOL('submit_course'), TOOL('submit_segment'), TOOL('submit_project'), TOOL('submit_reading')], model: AUTHOR_MODEL })
     .catch(err => $.ui.log(`teachme: author agent: ${err}`, { to: 'debug' }))
   await $.agent.register({ name: 'relay', description: 'Teach Me: starts the author or the doctor.', prompt: 'Reply OK, nothing else.', tools: [], model: 'haiku' })
     .catch(err => $.ui.log(`teachme: relay agent: ${err}`, { to: 'debug' }))
@@ -771,6 +922,7 @@ export function lessonSection() {
     text: 'Teach Me course in this folder. The lesson view (engine) runs every step, answer and hint; never repeat its content. ' +
       'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists; their position is in <teachme-position> on their message. ' +
       'End by pointing them back to the step in the lesson view. ' +
+      'When they want to study a topic in depth or freely, call explore with it instead of explaining at length. ' +
       'Never edit .teachme/ or practice/.',
   }
 }
@@ -811,6 +963,8 @@ export const registerLesson: Register = on => {
   on('tool.call', { tool: 'mcp__teachme-anything__submit_course' }, async ($, e) => ({ result: JSON.stringify(await submitCourse($, e as never)) }))
   on('tool.call', { tool: 'mcp__teachme-anything__build_with_me' }, async ($, e) => ({ result: JSON.stringify(await buildWithMe($, e as never)) }))
   on('tool.call', { tool: 'mcp__teachme-anything__recheck_setup' }, async $ => ({ result: await recheck($) }))
+  on('tool.call', { tool: 'mcp__teachme-anything__explore' }, async ($, e) => ({ result: JSON.stringify(await openExplore($, (e as unknown as { topic?: string }).topic)) }))
+  on('tool.call', { tool: 'mcp__teachme-anything__submit_reading' }, async ($, e) => ({ result: JSON.stringify(await submitReading($, e as never)) }))
   on('tool.call', { tool: 'mcp__teachme-anything__submit_project' }, async ($, e) => ({ result: JSON.stringify(await submitProject($, e as never)) }))
 
   // The turn that answers Ask: its text holds the prompt sent
@@ -834,6 +988,13 @@ export const registerLesson: Register = on => {
       return next(e)
     }
     const s = sess
+    // The reading's author ended without a valid submit_reading: say so, and let the learner try again
+    if (s?.writer && e.agentId && e.agentId === s.writer.agent) {
+      void metric($, { kind: 'reading-failed', topic: s.writer.topic })
+      if (s.explore) s.explore = { ...s.explore, writing: undefined, note: `The reading on "${s.writer.topic}" did not work this time. Open it again, or try another topic.` }
+      s.writer = undefined
+      await refresh($)
+    }
     if (s?.build?.stage === 'planning' && e.agentId && e.agentId === s.build.agent) {
       void metric($, { kind: 'project-failed', title: s.build.title })
       s.build = { ...s.build, stage: 'pick', open: true, note: 'Planning did not work this time. Pick again, or describe it another way.' }

@@ -141,6 +141,24 @@ export function authorTask(course: Course, example: Segment | undefined, snapsho
   ].filter(Boolean).join('\n\n')
 }
 
+const READING_RULES = `This is a reading for Explore, not a lesson: the learner chose to study this topic freely. No questions, no tasks, no checks.
+- Detailed, precise and complete: 4 to 10 sections, one idea each, in depth. Cover how it works and why, its parts and their exact behaviour, how it is used in real work, edge cases and common mistakes, and where it connects to neighbouring topics.
+- Each body is Markdown, at most 300 words: short paragraphs, lists for steps or options, a table when comparing. Bold a term where it is defined.
+- Precise: exact names, defaults, limits and outputs. When the behaviour changed between versions, say which version a statement holds for.
+- Examples: up to 30 lines. A python, javascript or sql example has code.run {file, argv, out}: it is run on the learner's machine, and out must be exactly what it prints. Other code is shown, not run. Use "python", never "python3".
+- Sources: every section names 1 or 2 pages it rests on, official documentation, the specification or the standard, as {title, url} with an https url you are sure exists. Each url is checked; one that does not answer is rejected.
+- "related": 3 to 5 topics to explore next.
+Submit it with submit_reading {format: "teachme.read/1", id (lowercase, dashes), topic, skill (a course skill id, if it is one), sections: [{title, body, code?, sources}], related}. If it returns errors, fix exactly those and submit again; stop after three tries.`
+
+export function readingTask(topic: string, env: string, snapshot?: string, deeper?: { reading: string; section: string }) {
+  return [
+    deeper ? `Write a reading that goes deeper into "${deeper.section}", a section of the reading "${deeper.reading}". The learner read it and wants more: go into what that section only touched, without repeating it. Its topic is "${topic}".` : `Write a reading on "${topic}".`,
+    READING_RULES,
+    snapshot ? `Pitch it to this learner (their course and level), without limiting it to what the course covers:\n${snapshot}` : 'There is no course here: pitch it to a developer new to this topic.',
+    `On this machine: ${env}.`,
+  ].join('\n\n')
+}
+
 export const DOCTOR_PROMPT = `You fix Teach Me on a learner's own machine. You get either failed setup items or a Teach Me problem
 found by the doctor checks.
 For each one: find the cause, fix it, then call recheck_setup. It runs the engine's own checks, so trust its ✓ or ✗
