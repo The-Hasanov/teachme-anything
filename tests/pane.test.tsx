@@ -216,6 +216,43 @@ test('Docker installed but its engine stopped is not set up: the learner gets In
   await ui.unmount()
 })
 
+test('placement in the pane: questions come with the course, are answered by clicks, and lesson 1 is written from the results', async ($, on) => {
+  world(on)
+  const { prompts, relay } = agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Kubernetes' } as never)
+  await relay()
+  expect(prompts()[0]).toMatch(/Add "placement": 4 or 5 questions/)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const texts = async () => [...await ui.findAll({ type: 'Text' }), ...await ui.findAll({ type: 'Markdown' })].map(t => t.text).join(' | ')
+  const buttons = async () => (await ui.findAll({ type: 'Button' })).map(b => b.text)
+  // "I use it, with gaps": the check waits for the course its questions come with
+  for (const key of ['choose-1', 'choose-3', 'choose-1']) await ui.press({ key })
+  expect(await texts()).toMatch(/Writing your course/)
+
+  const q = (id: string, skill: string, body: string) => ({ id, kind: 'mcq', skill, difficulty: 1, title: id, body, choices: [{ text: 'Containers', why: 'Right.' }, { text: 'Nodes', why: 'Nodes run pods.' }], key: [0] })
+  const course = {
+    format: 'teachme.course/1', id: 'k8s', subject: 'Kubernetes', goal: 'run an app on a cluster', intake: [],
+    skills: [{ id: 'pods', title: 'Pods', type: 'concept', prereqs: [], misconceptions: [] }, { id: 'services', title: 'Services', type: 'concept', prereqs: ['pods'], misconceptions: [] }],
+    phases: [{ id: 'basics', title: 'Pods', skills: ['pods', 'services'], segments: ['basics-1'] }],
+    setup: [{ id: 'verify', title: 'Checked on your machine', adapter: 'verify', where: 'local' }],
+  }
+  const submit = async (c: unknown) => JSON.parse((await $.tool.call({ tool: 'mcp__teachme-anything__submit_course', course: c } as never)).result as string)
+  expect((await submit({ ...course, placement: [{ ...q('pl1', 'pods', 'What runs in a pod?'), kind: 'concept' }] })).errors.join(' ')).toMatch(/placement pl1: kind "mcq" or "predict"/)
+  expect(await submit({ ...course, placement: [q('pl1', 'pods', 'What runs in a pod?'), q('pl2', 'services', 'What does a Service give pods?')] })).toMatchObject({ ok: true })
+  expect(prompts()).toHaveLength(1)
+
+  expect(await texts()).toMatch(/Where to start · 1 of 2[\s\S]*What runs in a pod\?/)
+  expect(await buttons()).toEqual(['Containers', 'Nodes', "I don't know", 'Skip the check', 'Open in VS Code'])
+  await ui.press({ key: 'choose-1' })
+  await ui.press({ key: 'act-dontknow' })
+  expect(await texts()).toMatch(/Your lessons start at \*?\*?Services/)
+  await ui.press({ key: 'act-continue' })
+  await relay()
+  expect(prompts()[1]).toMatch(/Write segment "basics-1"[\s\S]*start at the first skill they missed[\s\S]*Placement check: knew Pods; missed Services\./)
+  await ui.unmount()
+})
+
 test('a subject with no course: the intake runs while the author writes the course, which is validated first', async ($, on) => {
   const { files } = world(on)
   const { prompts, relay } = agents($, on)

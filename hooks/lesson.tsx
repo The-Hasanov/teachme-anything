@@ -329,7 +329,7 @@ async function runSetup($: EngineInterface) {
   }
   void metric($, { kind: 'setup', ms: (await now()) - t0 })
   const first = s.course.phases[0]?.segments[0]
-  if (first && !s.segments[first] && s.state.stage !== 'intake' && toolsReady(s)) await prepare($, '', first)
+  if (first && !s.segments[first] && !['intake', 'placement'].includes(s.state.stage) && toolsReady(s)) await prepare($, '', first)
 }
 
 const toolsReady = (s: Session) => !!s.course?.setup.filter(isToolReq).every(r => s.state.setup[r.id]?.status === 'ok')
@@ -761,6 +761,16 @@ async function submitCourse($: EngineInterface, input: { course: unknown }) {
   }
   if (Array.isArray(c?.setup) && c.setup.at(-1)?.adapter !== 'verify') errors.push('setup must end with the verify requirement')
   if (errors.length) return { ok: false, errors }
+  // Placement questions are checked like a lesson: valid questions, and examples that print what they say
+  if (c.placement?.length) {
+    const check: Segment = { format: 'teachme.script/1', id: 'placement', title: 'Placement', skills: [...new Set(c.placement.map(q => q.skill).filter((k): k is string => !!k))], steps: c.placement }
+    const bad = [
+      ...c.placement.filter(q => !['mcq', 'predict'].includes(q.kind) || !q.skill).map(q => `placement ${q.id}: kind "mcq" or "predict", with a skill`),
+      ...validateSegment(check, c).map(e => `placement: ${e}`),
+    ]
+    const v = bad.length ? undefined : await verifySegment($, check, s.os)
+    if (bad.length || !v!.ok) return { ok: false, errors: bad.length ? bad : v!.errors.map(e => `placement: ${e}`) }
+  }
   s.course = { ...c, id: s.course.id, intake: GENERIC_INTAKE }
   await install($, s.root, s.course, [])
   const t = await $.clock.now()
@@ -769,8 +779,10 @@ async function submitCourse($: EngineInterface, input: { course: unknown }) {
     ts: t, type: 'setup' as const, req: r.id, status: s.env?.tools[r.adapter] ? 'ok' as const : 'missing' as const, ...(s.env?.tools[r.adapter] ? { note: s.env.tools[r.adapter]! } : {}),
   })), effects: [] })
   void metric($, { kind: 'course', id: s.course.id, skills: s.course.skills.length })
-  // Lesson 1 is written from the learner's intake answers: now, if they are in, or when the last one comes
-  if (s.state.stage !== 'intake') {
+  // Lesson 1 is written from the learner's intake answers and placement check: now, if they are done, or when they are
+  // A course with no placement questions has nothing to check: the learner waiting for them goes on to the setup
+  if (s.state.stage === 'placement' && !s.course.placement?.length) await commit($, { events: press(await ctx($), { action: 'continue' }).events, effects: [] })
+  if (!['intake', 'placement'].includes(s.state.stage)) {
     await runSetup($)
     await prepare($, '', s.course.phases[0]?.segments[0])
   }

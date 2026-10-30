@@ -28,6 +28,8 @@ export type Course = {
   skills: Skill[]
   phases: Phase[]
   setup: Requirement[]
+  // Quick questions after the intake for a learner who knows some of it already: they decide where lesson 1 starts
+  placement?: Step[]
 }
 
 export type Choice = { text: string; code?: string; why: string }
@@ -118,9 +120,10 @@ export type LogEvent = { ts: number; device?: string } & (
   | { type: 'migrated-note'; text: string; skill?: string }
   | { type: 'reset'; segs: string[]; steps: string[]; skills: string[]; rewind: boolean; before?: string }
   | { type: 'read'; reading: string; section: number }
+  | { type: 'placed'; step: string; ok: boolean }
 )
 
-export type Stage = 'intake' | 'setup' | 'curriculum' | 'lesson' | 'recap'
+export type Stage = 'intake' | 'placement' | 'setup' | 'curriculum' | 'lesson' | 'recap'
 export type SetupStatus = 'ok' | 'missing' | 'running' | 'failed'
 
 export type Evidence = { skill: string; ts: number; ok: boolean; difficulty: number; hints: number; unseen: boolean; step: string; secs?: number }
@@ -153,6 +156,8 @@ export type LearnerState = {
   frame: Record<string, number>
   // Explore: the sections of each reading the learner has opened
   read: Record<string, number[]>
+  // The placement check: each question's result, right or not (I don't know counts as not)
+  placed: Record<string, boolean>
   since?: number
 }
 
