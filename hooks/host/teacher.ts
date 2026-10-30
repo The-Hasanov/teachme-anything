@@ -145,7 +145,7 @@ const READING_RULES = `This is a reading for Explore, not a lesson: the learner 
 - Detailed, precise and complete: 4 to 10 sections, one idea each, in depth. Cover how it works and why, its parts and their exact behaviour, how it is used in real work, edge cases and common mistakes, and where it connects to neighbouring topics.
 - Each body is Markdown, at most 300 words: short paragraphs, lists for steps or options, a table when comparing. Bold a term where it is defined.
 - Precise: exact names, defaults, limits and outputs. When the behaviour changed between versions, say which version a statement holds for.
-- Examples: up to 30 lines. A python, javascript or sql example has code.run {file, argv, out}: it is run on the learner's machine, and out must be exactly what it prints. Other code is shown, not run. Use "python", never "python3".
+- Examples: a section's "code" is {lang, source, run?}, up to 30 lines; leave "code" out when a section has none. A python, javascript or sql example has code.run {file, argv, out}: it is run on the learner's machine, and out must be exactly what it prints. Other code is shown, not run. Use "python", never "python3".
 - Sources: every section names 1 or 2 pages it rests on, official documentation, the specification or the standard, as {title, url} with an https url you are sure exists. Each url is checked; one that does not answer is rejected.
 - "related": 3 to 5 topics to explore next.
 Submit it with submit_reading {format: "teachme.read/1", id (lowercase, dashes), topic, skill (a course skill id, if it is one), sections: [{title, body, code?, sources}], related}. If it returns errors, fix exactly those and submit again; stop after three tries.`

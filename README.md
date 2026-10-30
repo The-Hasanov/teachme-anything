@@ -4,7 +4,7 @@ Learn any technical skill with Claude Code as your teacher, inside your own edit
 Every click answers at once, exercises are real and checked on your machine, and a mistake you make twice comes
 back from a new angle until it is fixed for good.
 
-![Top: VS Code with the practice file in the editor and the Teach Me lesson beside it, showing a hint and the cause of a mistake. Bottom: the terminal, with Claude Code on the left and the lesson pane on the right.](docs/workspace.png)
+![Explore in the VS Code lesson view: section 3 of 8 of a reading on Python decorators, about functools.wraps, with its sources, an example and the output it printed on this machine, and buttons for Next section, Previous, Contents, Go deeper, Other topics and Close.](docs/explore.png)
 
 ## Quick start
 
