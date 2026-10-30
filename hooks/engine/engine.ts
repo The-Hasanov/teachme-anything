@@ -346,8 +346,11 @@ export function press(c: Ctx, p: Press): Out {
     if (!q || a === undefined) return NONE
     const events: LogEvent[] = [{ ts: c.now, type: 'intake', q: q.id, a }]
     const isLast = c.course.intake.filter(x => s.intake[x.id] === undefined).length === 1
-    if (isLast) events.push({ ts: c.now, type: 'stage', stage: 'setup' })
-    return { events, effects: [] }
+    if (!isLast) return { events, effects: [] }
+    // The answers are in: check the machine, and write lesson 1 for this learner (the course may still be written)
+    events.push({ ts: c.now, type: 'stage', stage: 'setup' })
+    const first = segmentOrder(c.course)[0]
+    return { events, effects: [{ kind: 'setup' }, ...(first && !c.segments[first] ? [{ kind: 'prepare' as const, after: '', seg: first }] : [])] }
   }
   if (s.stage === 'setup') {
     if (c.busy) return NONE
@@ -526,12 +529,16 @@ export function screen(c: Ctx): Screen {
   if (s.stage === 'setup') {
     const done = setupDone(c)
     const mark = (st?: string) => st === 'ok' ? 'ok' as const : st === 'running' ? 'run' as const : st === 'failed' ? 'fail' as const : 'todo' as const
+    // One click approves installing and configuring everything listed as missing or failed
+    const needs = course.setup.some(r => ['missing', 'failed'].includes(s.setup[r.id]?.status ?? ''))
+    const tools = course.setup.some(r => s.setup[r.id]?.status === 'missing')
     return {
       kind: 'setup', title: 'Your setup',
       lines: course.setup.map(r => ({ mark: mark(s.setup[r.id]?.status), text: r.title, ...(s.setup[r.id]?.note ? { detail: s.setup[r.id]!.note } : {}) })),
-      ...(c.busy ? { result: { tone: 'wait' as const, text: c.busy } } : {}),
+      ...(c.busy ? { result: { tone: 'wait' as const, text: c.busy } } : tools ? { result: { tone: 'wait' as const, text: 'Teach Me installs and sets up what is missing for you.' } } : {}),
       actions: c.busy ? [] : done ? [act('continue', 'Continue', true, 'enter')]
-        : [act('setup', 'Set up', true, 'enter'), ...(Object.values(s.setup).some(x => x.status === 'failed') ? [act('heal', 'Fix it for me')] : [])],
+        : needs ? [act('heal', tools ? 'Install everything' : 'Fix it for me', true, 'enter'), act('setup', 'Check again')]
+        : [act('setup', 'Set up', true, 'enter')],
     }
   }
   if (s.stage === 'curriculum') {

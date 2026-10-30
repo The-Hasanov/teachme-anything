@@ -71,6 +71,18 @@ export function untaught(g: Segment, before: readonly Segment[] = []): string[] 
 }
 
 // A build-with-me phase as the author submits it
+// A re-plan replaces only what comes after the phase of the segment being written; projects stay
+export function replanErrors(course: Course, phases: any, segId: string): string[] {
+  if (!isArr(phases)) return ['phases must be the whole new list of phases']
+  const at = course.phases.findIndex(p => p.segments.includes(segId))
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+  const err = course.phases.slice(0, at + 1).flatMap((p, i) => same(phases[i], p) ? [] : [`phases[${i}] must stay exactly as it is ("${p.id}"): only phases after it may change`])
+  for (const p of course.phases.filter(x => x.project)) if (!phases.some((q: unknown) => same(q, p))) err.push(`the project phase "${p.id}" must stay`)
+  const ids = phases.flatMap((p: any) => isArr(p?.segments) ? p.segments : [])
+  for (const id of new Set(ids.filter((id: string, i: number) => ids.indexOf(id) !== i))) err.push(`segment id "${id}" is in more than one phase`)
+  return [...err, ...validateCourse({ ...course, phases }).map(e => `phases: ${e}`)]
+}
+
 export function validateProjectPhase(p: any, course: Course, newSkills: readonly any[] = []): string[] {
   const err: string[] = []
   const known = new Set([...course.skills, ...newSkills].map(k => k?.id))

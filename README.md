@@ -27,10 +27,16 @@ back from a new angle until it is fixed for good.
 
 - **Instant lessons.** A small engine runs the lesson: every answer, hint and next step shows in a few
   milliseconds, with no waiting for the model. The teacher works in the background, writing your next lesson.
-- **Any subject.** Git, Python, SQL and Big-O are built in. Anything else is written for you while you answer three
-  questions (about a minute), and every example and exercise is run on your machine before you see it.
+- **Any subject, written for you.** No course ships ready-made. The plan for yours is written while you answer three
+  questions (about a minute), the first lesson starts where your answers say your knowledge ends, and the rest of
+  the path is re-planned from your progress and weak spots as you go. Every example and exercise is run on your
+  machine before you see it.
 - **Real practice.** Code is checked by tests, tools by the state they leave, queries by their results, theory by
-  predicting, tracing and stepping through. One click installs what is missing.
+  predicting, tracing and stepping through. Setup finds the tools a course needs; if any are missing, one click
+  on **Install everything** has Teach Me install and configure them for you.
+- **Learn this codebase.** In a repo, say "teach me this codebase" or run `/teachme-anything:teach-codebase`. The
+  course is written from its code: its architecture, conventions and tests. You practise on a clone in `practice/`,
+  checked by the project's own tests.
 - **Build with me.** Run `/teachme-anything:build-with-me`, then pick one of three projects that fit your level, or
   type your own. It becomes the next phase of your course. In each milestone the setup and tests are added for you,
   then you write the core.
@@ -62,7 +68,7 @@ files in your course folder. Nothing is installed without your click, and the tu
 |---|---|---|
 | Engine | `hooks/engine/` | lesson flow, grading, hints, weakness loop, FSRS reviews, mastery, statistics: pure functions over an event log |
 | Host | `hooks/host/`, `hooks/lesson.tsx` | files, tool adapters, verification, the author agent, the pane, the VS Code channel |
-| Courses | `courses/` | the built-in courses, in the same format the author writes |
+| Example | `hooks/host/example.ts` | the format example the author writes from (no course ships with Teach Me) |
 | Extension | `extension/` | the lesson view, the layout manager, the channel to the plugin |
 | Skills | `skills/` | progress, strengths and weaknesses on request in chat |
 

@@ -11,7 +11,8 @@ export type Skill = {
   misconceptions: { tag: string; belief: string; prereq?: string }[]
 }
 
-export type Requirement = { id: string; title: string; adapter: string; where: 'local' | 'container'; why?: string }
+// adapter names a tool the engine knows; any other tool is a requirement with "check", the command that finds it
+export type Requirement = { id: string; title: string; adapter: string; where: 'local' | 'container'; why?: string; check?: string[] }
 
 // A build-with-me project is a phase: "project" is its folder, each segment one milestone in it
 export type Phase = { id: string; title: string; skills: string[]; segments: string[]; project?: string; brief?: string }

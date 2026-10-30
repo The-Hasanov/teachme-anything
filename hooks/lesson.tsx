@@ -1,18 +1,15 @@
 import { atom, read, update } from 'claude-code'
 
-import * as bigo from '../courses/bigo'
-import * as git from '../courses/git'
-import * as python from '../courses/python'
-import * as sql from '../courses/sql'
+import * as example from './host/example'
 import type { AgentSpawnArgs, AgentSpawnResult, EngineInterface, Register } from 'claude-code'
 
 import { checked, current, dashboard, level, press, screen, setupDone, snapshot, taught, withProject } from './engine/engine'
 import type { Ctx, Out } from './engine/engine'
 import { replay } from './engine/engine'
-import type { Build, Course, Effect, LogEvent, Line, Phase, Press, ProjectPick, Screen, Segment } from './engine/types'
+import type { Build, Course, Effect, LogEvent, Line, Phase, Press, ProjectPick, Requirement, Screen, Segment } from './engine/types'
 import { skillState } from './engine/mastery'
 import { migrate } from './engine/migrate'
-import { milestoneErrors, untaught, validateCourse, validateProjectPhase, validateSegment } from './engine/schema'
+import { milestoneErrors, replanErrors, untaught, validateCourse, validateProjectPhase, validateSegment } from './engine/schema'
 import { MANUAL, backUpScaffold, installPlan, isStaleScaffold, isTool, output, probeEnv, removeLesson, runCommand, runProbes, scaffold } from './host/adapters'
 import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
@@ -62,6 +59,8 @@ type Session = {
   prepError?: string
   prepSince?: number
   healAgent?: string
+  // The learner pressed Install everything: the doctor's calls run without a prompt until it ends
+  installApproved?: boolean
   build?: Build & { open: boolean; agent?: string }
   lastProbes?: { id: string; ok: boolean; got: string }[]
   vscode?: VsCode
@@ -291,22 +290,16 @@ async function runSetup($: EngineInterface) {
   const s = sess!
   if (!s.course || s.busy) return
   const now = async () => $.clock.now()
-  const set = async (req: string, status: 'ok' | 'running' | 'failed', note?: string) =>
+  const set = async (req: string, status: 'ok' | 'running' | 'missing' | 'failed', note?: string) =>
     commit($, { events: [{ ts: await now(), type: 'setup', req, status, ...(note ? { note } : {}) }], effects: [] })
   const t0 = await now()
+  // Only finds what is there: installing waits for the learner's one click (Install everything)
   for (const r of s.course.setup) {
     if (s.state.setup[r.id]?.status === 'ok') continue
     await set(r.id, 'running')
-    if (isTool(r.adapter)) {
-      let version = s.env?.tools[r.adapter] || (s.env = envCache = await probeEnv($)).tools[r.adapter]
-      for (const step of version ? [] : installPlan(r.adapter, s.os)) {
-        await set(r.id, 'running', step.label)
-        await runCommand($, s.root, step.argv)
-        s.env = envCache = await probeEnv($)
-        version = s.env.tools[r.adapter]
-        if (version) break
-      }
-      await (version ? set(r.id, 'ok', version) : set(r.id, 'failed', `Install it from ${MANUAL[r.adapter] ?? 'its website'}, then press Set up again.`))
+    if (isToolReq(r)) {
+      const version = await detect($, s, r)
+      await (version ? set(r.id, 'ok', version) : set(r.id, 'missing', 'Not on this machine yet'))
       if (!version) break
     } else if (r.adapter === 'practice') {
       const segs = Object.values(s.segments).filter(g => g.practice && !inProject(s, g.id))
@@ -329,7 +322,11 @@ async function runSetup($: EngineInterface) {
     }
   }
   void metric($, { kind: 'setup', ms: (await now()) - t0 })
+  const first = s.course.phases[0]?.segments[0]
+  if (first && !s.segments[first] && s.state.stage !== 'intake' && toolsReady(s)) await prepare($, '', first)
 }
+
+const toolsReady = (s: Session) => !!s.course?.setup.filter(isToolReq).every(r => s.state.setup[r.id]?.status === 'ok')
 
 const remedies = new Set<string>()
 const HEALING = 'Fixing your setup…'
@@ -342,16 +339,46 @@ async function recheck($: EngineInterface) {
   return s.course.setup.map(r => `${s.state.setup[r.id]?.status === 'ok' ? '✓' : '✗'} ${r.title}${s.state.setup[r.id]?.note ? `: ${s.state.setup[r.id]!.note}` : ''}`).join('\n')
 }
 
+const isToolReq = (r: Requirement) => isTool(r.adapter) || Array.isArray(r.check)
+
+// A known tool's version from the engine's probe; any other tool from the check command the course names
+async function detect($: EngineInterface, s: Session, r: Requirement) {
+  if (isTool(r.adapter)) return s.env?.tools[r.adapter] || (s.env = envCache = await probeEnv($)).tools[r.adapter] || undefined
+  const o = await output($, s.root, r.check!)
+  return o.ok ? (o.out || o.err).trim().split('\n')[0]!.slice(0, 80) || 'found' : undefined
+}
+
+// Install everything: the learner's one click approves installing and configuring every item that is missing or
+// failed. Known tools go through their install plan first; the doctor agent does the rest, with no more prompts.
 async function heal($: EngineInterface) {
   const s = sess!
   if (!s.course || s.busy || s.healAgent) return
-  const failed = s.course.setup.filter(r => s.state.setup[r.id]?.status === 'failed').map(r => `- ${r.title} (adapter ${r.adapter}): ${s.state.setup[r.id]!.note ?? 'failed'}`)
+  const open = () => s.course!.setup.filter(r => ['missing', 'failed'].includes(s.state.setup[r.id]?.status ?? ''))
+  s.installApproved = true
+  void metric($, { kind: 'install-approved', items: open().map(r => r.id) })
+  s.busy = HEALING
+  for (const r of open().filter(isToolReq)) {
+    for (const step of installPlan(r.adapter, s.os)) {
+      await commit($, { events: [{ ts: await $.clock.now(), type: 'setup', req: r.id, status: 'running', note: step.label }], effects: [] })
+      await runCommand($, s.root, step.argv)
+      s.env = envCache = await probeEnv($)
+      if (await detect($, s, r)) break
+    }
+  }
+  s.busy = undefined
+  await runSetup($)
+  if (!open().length) return
+  const failed = open().map(r => `- ${r.title} (adapter ${r.adapter}${r.check ? `, found by: ${r.check.join(' ')}` : ''}${r.why ? `, needed for: ${r.why}` : ''}${MANUAL[r.adapter] ? `, download: ${MANUAL[r.adapter]}` : ''}): ${s.state.setup[r.id]!.note ?? s.state.setup[r.id]!.status}`)
   s.busy = HEALING
   await refresh($)
   s.healAgent = RELAYING
   await spawnAgent($, {
-    subagentType: `${PLUGIN}:doctor`, description: 'Teach Me: fix the setup',
-    prompt: [`OS: ${s.os}. Folder: ${s.root}. Tools the engine found: ${JSON.stringify(s.env?.tools ?? {})}.`, 'Failed setup items:', ...failed].join('\n'),
+    subagentType: `${PLUGIN}:doctor`, description: 'Teach Me: install and set up what the course needs',
+    prompt: [
+      `OS: ${s.os}. Folder: ${s.root}. Tools the engine found: ${JSON.stringify(s.env?.tools ?? {})}.`,
+      'The learner pressed Install everything: they approved installing and configuring what these items need, so do it without asking. Your commands run without a permission prompt. Do nothing beyond these items.',
+      'Setup items to make ✓:', ...failed,
+    ].join('\n'),
   }, async r => {
     if (r.deny) { s.busy = undefined; s.healAgent = undefined; $.ui.log(`teachme: doctor not started: ${r.deny}`, { to: 'debug' }); await refresh($) }
     else s.healAgent = r.agentId
@@ -403,6 +430,8 @@ async function prepare($: EngineInterface, after: string, target?: string) {
   const order = s.course.phases.flatMap(p => p.segments)
   const nextId = target ?? order[order.indexOf(after) + 1]
   if (!nextId || s.segments[nextId]) return
+  // Lesson 1 is verified on this machine, so it waits for the tools; the setup starts it once they are all found
+  if (nextId === order[0] && !toolsReady(s)) return
   const phase = s.course.phases.find(p => p.segments.includes(nextId))
   s.preparing = nextId
   s.prepError = undefined
@@ -411,7 +440,7 @@ async function prepare($: EngineInterface, after: string, target?: string) {
   await refresh($)
   await spawnAgent($, {
     subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: 'Teach Me: prepare the next lesson',
-    prompt: authorTask(s.course, s.segments[after] ?? python.lists1, snapshot(await ctx($)), nextId, phase?.title ?? ''),
+    prompt: authorTask(s.course, s.segments[after] ?? example.lists1, snapshot(await ctx($)), nextId, phase?.title ?? ''),
   }, async r => {
     if (r.deny) { s.preparing = undefined; $.ui.log(`teachme: author not started: ${r.deny}`, { to: 'debug' }); await refresh($) }
     else if (s.preparing === nextId) s.prepAgent = r.agentId
@@ -419,12 +448,14 @@ async function prepare($: EngineInterface, after: string, target?: string) {
   })
 }
 
-async function submitSegment($: EngineInterface, input: { segment: unknown; newSkills?: Course['skills'] }) {
+async function submitSegment($: EngineInterface, input: { segment: unknown; newSkills?: Course['skills']; phases?: unknown }) {
   const s = sess
   if (!s?.course) return { ok: false, errors: ['no course in this folder'] }
-  const course: Course = input.newSkills?.length ? { ...s.course, skills: [...s.course.skills, ...input.newSkills.filter(k => !s.course!.skills.some(x => x.id === k.id))] } : s.course
+  const known: Course = input.newSkills?.length ? { ...s.course, skills: [...s.course.skills, ...input.newSkills.filter(k => !s.course!.skills.some(x => x.id === k.id))] } : s.course
   const seg = input.segment as Segment
-  const errors = validateSegment(seg, course)
+  const replan = input.phases === undefined ? [] : replanErrors(known, input.phases, seg?.id)
+  const course: Course = input.phases === undefined || replan.length ? known : { ...known, phases: input.phases as Phase[] }
+  const errors = [...replan, ...validateSegment(seg, course)]
   const project = course.phases.find(p => p.project && p.segments.includes(seg?.id))
   if (!errors.length) errors.push(...untaught(seg, Object.values(s.segments)), ...(project ? milestoneErrors(seg, project, Object.values(s.segments)) : []))
   // A rejection is kept, so a failed attempt says why instead of failing silently
@@ -441,7 +472,7 @@ async function submitSegment($: EngineInterface, input: { segment: unknown; newS
   s.segments[seg.id] = seg
   if (s.preparing === seg.id) s.preparing = undefined
   await install($, s.root, s.course, [seg])
-  void metric($, { kind: 'segment', seg: seg.id, verifyMs: v.ms })
+  void metric($, { kind: 'segment', seg: seg.id, verifyMs: v.ms, ...(input.phases ? { replanned: course.phases.length } : {}) })
   await refresh($)
   return { ok: true, id: seg.id }
 }
@@ -471,21 +502,21 @@ async function probeEnvCached($: EngineInterface) {
   return envCache
 }
 
-const LIBRARY: { match: RegExp; course: Course; segments: Segment[] }[] = [
-  { match: /\bgit\b/i, course: git.course, segments: git.segments },
-  { match: /\bpython\b/i, course: python.course, segments: python.segments },
-  { match: /\bsql\b|sqlite|database quer/i, course: sql.course, segments: sql.segments },
-  { match: /big[- ]?o\b|complexity/i, course: bigo.course, segments: bigo.segments },
-]
+// A codebase course clones the repo into practice/: keep the clone out of the learner's git status
+async function excludePractice($: EngineInterface, root: string) {
+  const path = `${root}/.git/info/exclude`
+  const text = await $.fs.read(path).catch(() => undefined)
+  if (text !== undefined && !/^\/practice\/$/m.test(text)) await $.fs.write(path, `${text.replace(/\n?$/, '\n')}/practice/\n`)
+}
 
-async function generateCourse($: EngineInterface, subject: string, root: string, background?: string, project?: ProjectPick) {
+async function generateCourse($: EngineInterface, subject: string, root: string, background?: string, project?: ProjectPick, codebase?: boolean) {
   const env = await probeEnvCached($)
   const id = subject.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'course'
   const provisional: Course = { format: 'teachme.course/1', id, subject, goal: subject, intake: GENERIC_INTAKE, skills: [], phases: [], setup: [] }
   const device = await deviceOf($)
   sess = {
     root, os: env.os, course: provisional, segments: {}, state: replay([]),
-    log: newLog(root, device), metrics: newLog(root, device, 'metrics'), welcome: false, env, busy: 'Writing your course: about a minute.',
+    log: newLog(root, device), metrics: newLog(root, device, 'metrics'), welcome: false, env, busy: codebase ? 'Reading the project and writing your course: about 3 minutes.' : 'Writing your course: about a minute.',
     vscode: vsCodeFor($, root),
   }
   const t0 = await $.clock.now()
@@ -494,10 +525,11 @@ async function generateCourse($: EngineInterface, subject: string, root: string,
   const tools = Object.entries(env.tools).filter(([, v]) => v).map(([k, v]) => `${k} (${v})`).join(', ')
   const relay = await spawnAgent($, {
     subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: `Teach Me: a new course on ${subject}`,
-    prompt: courseTask(subject, `${env.os}; ${tools || 'no developer tools found'}`, { course: python.course, segment: python.lists1 }, background, project),
-  }, r => { void metric($, { kind: 'generate', subject, started: !r.deny }) })
+    prompt: courseTask(subject, `${env.os}; ${tools || 'no developer tools found'}`, { course: example.course, segment: example.lists1 }, background, project, codebase ? root : undefined),
+  }, r => { void metric($, { kind: 'generate', subject, started: !r.deny, ...(codebase ? { codebase } : {}) }) })
+  if (codebase) await excludePractice($, root)
   if (relay.deny) return { ok: false, reason: `the course author could not start: ${relay.deny}` }
-  return { ok: true, course: subject, generating: true, ...(background ? { writtenFor: background } : {}), next: 'The lesson view asks 3 questions while a course is written for this learner (about a minute). Say one short line; nothing else to do.' }
+  return { ok: true, course: subject, generating: true, ...(background ? { writtenFor: background } : {}), next: `The lesson view asks 3 questions while a course is written for this learner (${codebase ? 'about 3 minutes' : 'about a minute'}). Say one short line; nothing else to do.` }
 }
 
 async function buildWithMe($: EngineInterface, a: { suggestions?: ProjectPick[]; idea?: string; subject?: string }) {
@@ -582,7 +614,10 @@ async function submitCourse($: EngineInterface, input: { course: unknown }) {
   if (!s?.course || s.course.setup.length) return { ok: false, errors: ['no course is being written in this folder'] }
   const c = input.course as Course
   const errors = validateCourse(c)
-  for (const r of Array.isArray(c?.setup) ? c.setup : []) if (!SETUP_ADAPTERS.includes(r?.adapter)) errors.push(`setup ${r?.id}: adapter must be one of ${SETUP_ADAPTERS.join(', ')}`)
+  for (const r of Array.isArray(c?.setup) ? c.setup : []) {
+    const custom = Array.isArray(r?.check) && r.check.length > 0 && r.check.every((a: unknown) => typeof a === 'string')
+    if (!SETUP_ADAPTERS.includes(r?.adapter) && !custom) errors.push(`setup ${r?.id}: adapter must be one of ${SETUP_ADAPTERS.join(', ')}, or name another tool and give "check", the command that prints its version`)
+  }
   if (Array.isArray(c?.setup) && c.setup.at(-1)?.adapter !== 'verify') errors.push('setup must end with the verify requirement')
   if (errors.length) return { ok: false, errors }
   s.course = { ...c, id: s.course.id, intake: GENERIC_INTAKE }
@@ -593,33 +628,23 @@ async function submitCourse($: EngineInterface, input: { course: unknown }) {
     ts: t, type: 'setup' as const, req: r.id, status: s.env?.tools[r.adapter] ? 'ok' as const : 'missing' as const, ...(s.env?.tools[r.adapter] ? { note: s.env.tools[r.adapter]! } : {}),
   })), effects: [] })
   void metric($, { kind: 'course', id: s.course.id, skills: s.course.skills.length })
-  return { ok: true, next: `Now submit segment "${s.course.phases[0]?.segments[0]}" with submit_segment.` }
+  // Lesson 1 is written from the learner's intake answers: now, if they are in, or when the last one comes
+  if (s.state.stage !== 'intake') {
+    await runSetup($)
+    await prepare($, '', s.course.phases[0]?.segments[0])
+  }
+  return { ok: true, next: 'The course is in. Stop now: lesson 1 is written for this learner once they have answered the intake.' }
 }
 
-async function startCourse($: EngineInterface, subject: string, root: string, who: { background?: string; skipBasics?: boolean } = {}) {
+// No course ships with Teach Me: every course is written for the learner who asks
+async function startCourse($: EngineInterface, subject: string, root: string, who: { background?: string; codebase?: boolean } = {}) {
   if (await hasCourse($, root)) {
     if (!sess) await open($, root)
     return { ok: true, resumed: true, course: sess?.course?.subject, screen: (await read($, view))?.kind }
   }
   if (sess?.root === root && sess.course && !sess.course.setup.length) return { ok: true, resumed: true, course: sess.course.subject, next: 'The course is being written; the learner answers the intake meanwhile.' }
-  const lib = who.skipBasics ? undefined : LIBRARY.find(c => c.match.test(subject))
-  if (!lib) return generateCourse($, subject, root, who.background)
-  const { course, segments } = lib
-  await install($, root, course, segments)
-  await open($, root)
-  const s = sess!
-  const t = await $.clock.now()
-  const env = s.env!
-  const detected: LogEvent[] = [
-    { ts: t, type: 'course', course: course.id },
-    ...course.setup.filter(r => isTool(r.adapter)).map(r => ({
-      ts: t, type: 'setup' as const, req: r.id, status: env.tools[r.adapter] ? 'ok' as const : 'missing' as const, ...(env.tools[r.adapter] ? { note: env.tools[r.adapter]! } : {}),
-    })),
-  ]
-  await commit($, { events: detected, effects: [] })
-  void metric($, { kind: 'start', envMs: env.ms })
-  await $.ui.open({ id: PANE, title: course.subject })
-  return { ok: true, course: course.subject, env: `${env.os}, ${env.shell}, ${env.editor}; ${Object.entries(env.tools).filter(([, v]) => v).map(([k]) => k).join(', ')}`, next: 'The learner answers 3 questions in the lesson view. Say one short line; nothing else to do.' }
+  if (who.codebase) return generateCourse($, root.split(/[\\/]/).pop() || subject, root, who.background, undefined, true)
+  return generateCourse($, subject, root, who.background)
 }
 
 export async function lessonRegister($: EngineInterface) {
@@ -631,7 +656,7 @@ export async function lessonRegister($: EngineInterface) {
       properties: {
         subject: { type: 'string', description: 'What the learner wants to learn, e.g. "Git"' },
         background: { type: 'string', description: 'What the learner said they already know, in their words, if they said it' },
-        skipBasics: { type: 'boolean', description: 'true only if the learner said they already know the basics or asked to skip them' },
+        codebase: { type: 'boolean', description: 'true when the learner wants to learn the project in this folder ("teach me this codebase", "help me understand this repo"); subject is then its language or stack' },
       },
       required: ['subject'],
     },
@@ -649,7 +674,7 @@ export async function lessonRegister($: EngineInterface) {
   await $.tool.register({
     name: 'submit_segment',
     description: 'Teach Me author: submit a lesson segment (teachme.script/1). It is validated and every check is run before it is cached. Returns {ok} or {errors}.',
-    inputSchema: { type: 'object', properties: { segment: { type: 'object' }, newSkills: { type: 'array', items: { type: 'object' } } }, required: ['segment'] },
+    inputSchema: { type: 'object', properties: { segment: { type: 'object' }, newSkills: { type: 'array', items: { type: 'object' } }, phases: { type: 'array', items: { type: 'object' }, description: 'Optional re-plan: the whole new list of phases; only phases after the one of this segment may change' } }, required: ['segment'] },
   })
   await $.tool.register({
     name: 'build_with_me', isDeferred: false,
@@ -678,7 +703,7 @@ export async function lessonRegister($: EngineInterface) {
     description: 'Teach Me author: submit a new course (teachme.course/1) for the subject the learner asked for. It is validated; returns {ok, next} or {errors}.',
     inputSchema: { type: 'object', properties: { course: { type: 'object' } }, required: ['course'] },
   })
-  await $.agent.register({ name: 'author', description: 'Writes Teach Me courses and lesson segments for one learner.', prompt: AUTHOR_PROMPT, tools: [TOOL('submit_course'), TOOL('submit_segment'), TOOL('submit_project')], model: AUTHOR_MODEL })
+  await $.agent.register({ name: 'author', description: 'Writes Teach Me courses and lesson segments for one learner.', prompt: AUTHOR_PROMPT, tools: ['Read', 'Glob', 'Grep', TOOL('submit_course'), TOOL('submit_segment'), TOOL('submit_project')], model: AUTHOR_MODEL })
     .catch(err => $.ui.log(`teachme: author agent: ${err}`, { to: 'debug' }))
   await $.agent.register({ name: 'relay', description: 'Teach Me: starts the author or the doctor.', prompt: 'Reply OK, nothing else.', tools: [], model: 'haiku' })
     .catch(err => $.ui.log(`teachme: relay agent: ${err}`, { to: 'debug' }))
@@ -768,10 +793,11 @@ export const registerLesson: Register = on => {
   on('agent.offer', { agent: `${PLUGIN}:author` }, () => ({ isOffered: false }))
   on('agent.offer', { agent: `${PLUGIN}:relay` }, () => ({ isOffered: false }))
 
-  on('tool.check', async ($, e, next) => OWN_TOOLS.has(e.tool) ? { decision: 'allow', reason: 'Teach Me engine tool' } : next(e))
+  on('tool.check', async ($, e, next) => OWN_TOOLS.has(e.tool) ? { decision: 'allow', reason: 'Teach Me engine tool' }
+    : sess?.installApproved && e.agentId && e.agentId === sess.healAgent ? { decision: 'allow', reason: 'The learner pressed Install everything' } : next(e))
 
   on('tool.call', { tool: 'mcp__teachme-anything__start_course' }, async ($, e) => {
-    const a = e as unknown as { subject: string; background?: string; skipBasics?: boolean }
+    const a = e as unknown as { subject: string; background?: string; codebase?: boolean }
     return { result: JSON.stringify(await startCourse($, a.subject, await $.session.cwd(), a)) }
   })
   on('tool.call', { tool: 'mcp__teachme-anything__snapshot' }, async $ => ({ result: sess ? snapshot(await ctx($)) : 'No Teach Me course in this folder.' }))
@@ -816,6 +842,7 @@ export const registerLesson: Register = on => {
     // The doctor finished: check the setup again, so its fix shows as ✓ or the item stays ✗ with a reason
     if (s?.healAgent && e.agentId === s.healAgent) {
       s.healAgent = undefined
+      s.installApproved = false
       await recheck($)
     }
     if (s?.preparing && e.agentId && e.agentId === s.prepAgent) {

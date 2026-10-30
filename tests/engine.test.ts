@@ -1,11 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 
-import * as git from '../courses/git'
+import * as git from './fixtures/git'
 import { apply, checked, current, dashboard, initial, press, replay, screen, snapshot, taught, withProject, level } from '../hooks/engine/engine'
 import type { Ctx, Out } from '../hooks/engine/engine'
 import { skillState } from '../hooks/engine/mastery'
 import { stats } from '../hooks/engine/stats'
-import { untaught, validateCourse, validateSegment } from '../hooks/engine/schema'
+import { replanErrors, untaught, validateCourse, validateSegment } from '../hooks/engine/schema'
 import type { LogEvent, Press } from '../hooks/engine/types'
 
 const T0 = Date.parse('2026-10-27T10:00:00Z')
@@ -492,4 +492,17 @@ test("the learner's level comes from their answers and is in the snapshot the pr
   right('branch-switch', 3); right('branch-switch', 4)
   expect(level(l.c)).toMatchObject({ band: 'confident', canUse: ['branch-model', 'branch-switch'], learning: [], notStarted: ['branch-commit', 'branch-from'] })
   expect(snapshot(l.c)).toMatch(/Level: confident \(100% right over 4 answers.*\nCan use: branch-model, branch-switch\. Still learning: none\. Not started: branch-commit, branch-from\./)
+})
+
+test('a re-plan changes only what comes after the phase being written, and keeps every project', () => {
+  const c = git.course
+  const project = { id: 'tool', title: 'A small tool', brief: 'b', project: 'practice/tool', skills: [c.skills[0]!.id], segments: ['tool-1'] }
+  const course = { ...c, phases: [...c.phases, project] }
+  const first = c.phases[0]!.segments[0]!
+  const later = { id: 'later', title: 'Later', skills: [c.skills[0]!.id], segments: ['later-1'] }
+  expect(replanErrors(course, [c.phases[0], later, project], first)).toEqual([])
+  expect(replanErrors(course, [c.phases[0], later], first).join(' ')).toMatch(/project phase "tool" must stay/)
+  expect(replanErrors(course, [later, project], first).join(' ')).toMatch(/phases\[0\] must stay exactly as it is/)
+  expect(replanErrors(course, [c.phases[0], { ...later, segments: [first] }, project], first).join(' ')).toMatch(/in more than one phase/)
+  expect(replanErrors(course, [c.phases[0], { ...later, skills: ['nope'] }, project], first).join(' ')).toMatch(/unknown skill nope/)
 })

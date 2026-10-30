@@ -1,9 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
-import * as bigo from '../courses/bigo'
-import * as git from '../courses/git'
-import * as python from '../courses/python'
-import * as sql from '../courses/sql'
+import * as bigo from './fixtures/bigo'
+import * as git from './fixtures/git'
+import * as python from '../hooks/host/example'
+import * as sql from './fixtures/sql'
 import { apply, press, replay, screen } from '../hooks/engine/engine'
 import type { Ctx } from '../hooks/engine/engine'
 import { validateCourse, validateSegment } from '../hooks/engine/schema'
