@@ -270,6 +270,8 @@ test('a subject with no course: the intake runs while the author writes the cour
   expect(JSON.parse(files[`${ROOT}/.teachme/course.json`]!).phases.map((p: { id: string }) => p.id)).toEqual(['basics', 'deploy'])
   expect(Object.entries(files).find(([f]) => f.endsWith('/.teachme/metrics.jsonl'))?.[1]).toMatch(/"kind":"segment-rejected","seg":"basics-1","errors":\["[^"]*skill pods is tested before/)
   expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Start Pods', 'Progress', 'Explore', 'Open in VS Code'])
+  // The learner sees the new plan on their path
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text).join(' | ')).toMatch(/Pods[\s\S]*Deployments/)
   await ui.unmount()
 })
 
@@ -442,6 +444,21 @@ test('Explore with no course: open a topic, the reading is checked before it is 
   const log = Object.entries(files).find(([f]) => f.includes('/.teachme/log/'))?.[1] ?? ''
   expect(log.trim().split('\n').map(l => JSON.parse(l)).map(e => `${e.type}:${e.reading}:${e.section}`)).toEqual(['read:rust-ownership:0', 'read:rust-ownership:1', 'read:rust-ownership:2'])
   expect(calls.model).toBe(0)
+  await ui.unmount()
+})
+
+test('Explore lists the readings kept in .teachme/read/, and skips one that is broken or invalid', async ($, on) => {
+  const { files } = world(on)
+  files[`${ROOT}/.teachme/read/rust-ownership.json`] = JSON.stringify(reading)
+  files[`${ROOT}/.teachme/read/broken.json`] = '{"format": "teachme.read/1", "id": "bro'
+  files[`${ROOT}/.teachme/read/no-sources.json`] = JSON.stringify({ ...reading, id: 'no-sources', topic: 'No sources', sections: reading.sections.map(x => ({ ...x, sources: [] })) })
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__explore' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['Rust ownership · 0 of 3 read', 'Borrowing', 'Lifetimes', 'Smart pointers', 'Close', 'Open in VS Code'])
+  // A reading kept here opens at once, with no author and no model
+  await ui.press({ key: 'choose-1' })
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text).join(' | ')).toMatch(/Section 1 of 3/)
   await ui.unmount()
 })
 
