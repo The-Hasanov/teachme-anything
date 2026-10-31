@@ -2,7 +2,7 @@
 
 Learn any technical skill with Claude Code as your teacher, in your own editor and terminal.
 
-![Explore in the VS Code lesson view](docs/explore.png)
+![A lesson in VS Code: a wrong answer, why it is wrong, and a drill to fix it](docs/lesson.png)
 
 ## Quick start
 
