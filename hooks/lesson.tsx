@@ -1047,10 +1047,10 @@ export const registerLesson: Register = on => {
     if (!sc) return <Text dimColor>Say "teach me &lt;subject&gt;" to start.</Text>
     const go = (p: Press) => () => { void dispatch($, p) }
     const tone = (t?: string) => t === 'right' ? 'success' : t === 'wrong' ? 'warning' : undefined
-    // Only letters can be hotkeys here; Explore's Previous (← in the view) takes P, free on that screen
-    const hotkey = (k?: string) => k === 'left' && sc.kind === 'explore' ? 'p' : k && /^[a-z]$/.test(k) ? k : undefined
-    const glyph = { ok: '✓', todo: '○', fail: '⚠', run: '…', now: '●' } as const
-    const markColor = { ok: 'success', todo: undefined, fail: 'warning', run: undefined, now: ACCENT } as const
+    // Only letters can be hotkeys here; Previous (← in the view) takes P when nothing else on the screen does
+    const hotkey = (k?: string) => k === 'left' && !sc.actions.some(a => a.key === 'p') ? 'p' : k && /^[a-z]$/.test(k) ? k : undefined
+    const glyph = { ok: '✓', todo: '○', fail: '⚠', run: '…', now: '●', half: '◐' } as const
+    const markColor = { ok: 'success', todo: undefined, fail: 'warning', run: undefined, now: ACCENT, half: ACCENT } as const
     const line = (l: Line, key: string) => (
       <Box key={key} flexDirection="column">
         <Text color={markColor[l.mark]} dimColor={l.mark === 'todo' || l.mark === 'run'}>{glyph[l.mark]} {l.text}</Text>

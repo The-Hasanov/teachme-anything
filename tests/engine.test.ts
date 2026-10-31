@@ -294,9 +294,17 @@ test('progress is read from the answers: accuracy, first try, time, the curve, s
   expect(st.medianSecs).toBeGreaterThan(0)
   expect(st.weaknesses).toEqual([{ text: expect.stringMatching(/^The idea that /), detail: '1× wrong · fixed once, re-checked later' }])
   const sc = screen({ ...l.c, progress: true })
-  expect(sc).toMatchObject({ kind: 'progress', title: 'Your progress', chart: { points: [0, 0.5] }, actions: [{ id: 'back' }] })
+  expect(sc).toMatchObject({ kind: 'progress', title: 'Your progress', actions: [{ id: 'back' }] })
   expect(sc.tiles?.slice(0, 3)).toEqual([{ label: 'right', value: '50%' }, { label: 'right first try', value: '50%' }, { label: 'answers', value: '2' }])
-  expect(sc.groups?.map(g => g.title)).toEqual(['Strengths', 'To work on', 'Skills'])
+  // Two points would draw a steep fall; the curve waits for five answers
+  expect(sc.chart).toBeUndefined()
+  expect(sc.groups?.map(g => g.title)).toEqual(['Learning curve', 'Strengths', 'To work on', 'Skills'])
+  expect(sc.groups?.[0]?.lines).toEqual([{ mark: 'todo', text: 'Your curve appears after 5 answers' }])
+  // A skill being learned has its own half mark, and counts half in the bar while the label stays whole
+  const learning = git.course.skills.filter(k => skillState(l.c.state, k.id, l.c.now) === 'learning')
+  expect(learning.length).toBeGreaterThan(0)
+  expect(sc.groups?.[3]?.lines.filter(x => x.mark === 'half').map(x => x.text)).toEqual(learning.map(k => k.title))
+  expect(sc.progress).toEqual({ label: `0 of ${git.course.skills.length} skills`, done: learning.length / 2, total: git.course.skills.length })
   expect(screen({ ...learner().c, progress: true }).body).toMatch(/^No answers yet/)
 })
 
@@ -353,15 +361,16 @@ test('the dashboard path: lessons done, the current one with its step, the next 
   const steps = git.branches1.steps.filter(x => !x.drill).length
   expect(dashboard(l.c)).toEqual({
     title: git.course.subject, goal: git.course.goal,
-    overall: { label: '0 of 2 lessons', done: 0, total: 2 },
+    overall: { label: `Lesson 1 of 2 · 1 of ${steps} steps`, done: 0, total: 2 },
     phases: [
       { id: 'branches', title: 'Branches', mark: 'now', done: 0, total: 1, lessons: [{ title: 'Branches', status: 'now', steps: `1 of ${steps} steps` }] },
       { id: 'merging', title: 'Merging', mark: 'todo', done: 0, total: 1, lessons: [{ title: 'Not written yet', status: 'todo' }] },
     ],
   })
-  // Steps into the lesson move the overall share before the lesson is done
+  // Steps into the lesson move its phase bar and the overall share before the lesson is done
   l.go({ action: 'next' })
-  expect(dashboard(l.c)?.overall).toEqual({ label: '0 of 2 lessons', done: 1 / steps, total: 2 })
+  expect(dashboard(l.c)?.overall).toEqual({ label: `Lesson 1 of 2 · 2 of ${steps} steps`, done: 1 / steps, total: 2 })
+  expect(dashboard(l.c)?.phases.map(p => [p.done, p.progress])).toEqual([[0, 1 / steps], [0, undefined]])
   l.take({ events: [{ ts: l.c.now, type: 'stage', stage: 'recap' }], effects: [] })
   l.c.preparing = true
   expect(dashboard(l.c)?.phases.map(p => [p.mark, p.lessons[0]!.status])).toEqual([['ok', 'done'], ['now', 'writing']])

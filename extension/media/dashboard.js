@@ -6,6 +6,7 @@
   let state = { data: undefined, screen: undefined, up: false };
   const widths = new Map();
   let slot;
+  let flash = false;
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const pct = (done, total) => total ? Math.round(done / total * 100) : 0;
@@ -31,7 +32,7 @@
     return `<section class="phases">${d.phases.map((p, i) => `
       <article class="card phase ${p.mark}" data-i="${i}">
         <div class="phase-head">${icon(PHASE_ICON[p.mark])}<h2>${esc(p.title)}</h2><span class="count">${p.done} of ${p.total} lesson${p.total === 1 ? '' : 's'}</span>${p.mark === 'todo' ? '' : `<button class="ghost" data-reset="${esc(p.id)}" data-title="${esc(p.title)}" title="Reset ${esc(p.title)}" aria-label="Reset ${esc(p.title)}">${icon('discard')}</button>`}</div>
-        ${bar(`phase-${i}`, p.done, p.total)}
+        ${bar(`phase-${i}`, p.progress ?? p.done, p.total)}
         <ol class="lessons">${p.lessons.map(l => `
           <li class="lesson ${l.status}"><span class="dot" aria-hidden="true"></span><span class="name">${esc(l.title)}</span><span class="state">${esc(l.steps ?? LESSON_TEXT[l.status])}</span></li>`).join('')}
         </ol>
@@ -41,7 +42,7 @@
   function controlTab(s, up) {
     const actions = s?.actions ?? [];
     return `<section class="control">
-      <article class="card status ${up ? 'up' : 'down'}">
+      <article class="card status ${up ? 'up' : 'down'}${flash ? ' flash' : ''}">
         <span class="pulse" aria-hidden="true"></span>
         <div><h2>${up ? 'Connected to Claude Code' : 'Not connected'}</h2>
         <p>${up ? 'Buttons here drive the lesson running in your Claude Code session.' : 'Start Claude Code in this folder; the lesson connects by itself.'}</p></div>
@@ -133,7 +134,14 @@
   });
   window.addEventListener('resize', placeIndicator);
   window.addEventListener('message', (e) => {
-    if (e.data.type === 'state') { const first = !state.data; state = e.data; render(first ? 'first' : ''); }
+    if (e.data.type === 'state') {
+      const first = !state.data;
+      // The dot glows once when the connection changes, not on every redraw
+      flash = !first && e.data.up !== state.up;
+      state = e.data;
+      render(first ? 'first' : '');
+      flash = false;
+    }
     if (e.data.type === 'click') root.querySelector(e.data.selector)?.click();
   });
   render('first');

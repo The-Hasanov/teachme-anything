@@ -168,7 +168,7 @@ export type Dashboard = {
   title: string
   goal: string
   overall: { label: string; done: number; total: number }
-  phases: { id: string; title: string; mark: 'ok' | 'now' | 'todo'; done: number; total: number; lessons: { title: string; status: LessonStatus; steps?: string }[] }[]
+  phases: { id: string; title: string; mark: 'ok' | 'now' | 'todo'; done: number; progress?: number; total: number; lessons: { title: string; status: LessonStatus; steps?: string }[] }[]
 }
 
 export type Effect =

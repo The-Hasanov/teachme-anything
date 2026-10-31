@@ -832,7 +832,9 @@ export function withProject(course: Course, s: LearnerState, phase: Phase): Phas
     ...course.phases.slice(i + 1),
   ]
 }
-const SKILL_MARK = { 'not-started': 'todo', learning: 'now', practiced: 'ok', demonstrated: 'ok', mastered: 'ok' } as const
+// Two or three points draw a steep line that reads as failing; the curve waits for a few answers
+const CURVE_MIN = 5
+const SKILL_MARK = { 'not-started': 'todo', learning: 'half', practiced: 'ok', demonstrated: 'ok', mastered: 'ok' } as const
 const stateText = (state: string) => state.replace('-', ' ')
 
 function progressScreen(c: Ctx): Screen {
@@ -851,8 +853,9 @@ function progressScreen(c: Ctx): Screen {
       ...(st.medianSecs !== undefined ? [{ label: 'median time', value: `${st.medianSecs} s` }] : []),
       st.streak > 1 ? { label: 'days in a row', value: String(st.streak) } : { label: st.days === 1 ? 'day active' : 'days active', value: String(st.days) },
     ],
-    ...(st.curve.length >= 2 ? { chart: { label: `Learning curve: share right over your last ${WINDOW} answers · lowest ${pct(lowest)}, now ${pct(latest)}`, points: st.curve } } : {}),
+    ...(st.curve.length >= CURVE_MIN ? { chart: { label: `Learning curve: share right over your last ${WINDOW} answers · lowest ${pct(lowest)}, now ${pct(latest)}`, points: st.curve } } : {}),
     groups: [
+      ...(st.curve.length < CURVE_MIN ? [{ title: 'Learning curve', lines: [{ mark: 'todo' as const, text: `Your curve appears after ${CURVE_MIN} answers` }] }] : []),
       { title: 'Strengths', lines: st.strengths.length ? st.strengths.map(k => ({ mark: 'ok' as const, text: k.title, detail: `${right(k)} · ${stateText(k.state)}` })) : [{ mark: 'todo' as const, text: 'Shown after a few right answers on one skill' }] },
       { title: 'To work on', lines: st.weaknesses.length ? st.weaknesses.map(w => ({ mark: 'fail' as const, text: w.text, detail: w.detail })) : [{ mark: 'ok' as const, text: 'Nothing open' }] },
       { title: 'Skills', lines: st.skills.map(k => ({ mark: SKILL_MARK[k.state], text: k.title, detail: [k.answers ? right(k) : '', stateText(k.state), k.idk ? `${k.idk}× "I don't know"` : ''].filter(Boolean).join(' · ') })) },
@@ -876,25 +879,30 @@ export function dashboard(c: Ctx): Dashboard | undefined {
     const steps = st === 'now' && seg && s.pos ? `${stepNumber(seg, s.pos.step)} of ${seg.steps.filter(x => !x.drill).length} steps` : undefined
     return { title: seg?.title ?? 'Not written yet', status: st, ...(steps ? { steps } : {}) }
   }
+  // The lesson under way counts by its steps, so its phase bar and the ring move before a whole lesson is done
+  const seg = now ? c.segments[now] : undefined
+  const steps = seg ? seg.steps.filter(x => !x.drill).length : 0
+  const step = seg && s.pos ? stepNumber(seg, s.pos.step) : 0
+  const part = step ? (step - 1) / Math.max(1, steps) : 0
   const phases = course.phases.map(p => {
     const lessons = p.segments.map(lesson)
     const done = lessons.filter(l => l.status === 'done').length
     const mark = done === lessons.length && lessons.length ? 'ok' as const : lessons.some(l => l.status !== 'todo' && l.status !== 'ready') || done ? 'now' as const : 'todo' as const
-    return { id: p.id, title: p.title, mark, done, total: lessons.length, lessons }
+    return { id: p.id, title: p.title, mark, done, ...(part && now && p.segments.includes(now) ? { progress: done + part } : {}), total: lessons.length, lessons }
   })
   const done = phases.reduce((n, p) => n + p.done, 0)
-  // The lesson under way counts by its steps, so the ring moves before a whole lesson is done
-  const seg = now ? c.segments[now] : undefined
-  const part = seg && s.pos ? (stepNumber(seg, s.pos.step) - 1) / Math.max(1, seg.steps.filter(x => !x.drill).length) : 0
-  return { title: course.subject, goal: course.goal, overall: { label: `${done} of ${order.length} lesson${order.length === 1 ? '' : 's'}`, done: done + part, total: order.length }, phases }
+  const label = step ? `Lesson ${order.indexOf(now!) + 1} of ${order.length} · ${step} of ${steps} steps` : `${done} of ${order.length} lesson${order.length === 1 ? '' : 's'}`
+  return { title: course.subject, goal: course.goal, overall: { label, done: done + part, total: order.length }, phases }
 }
 
 const stepNumber = (seg: Segment, index: number) => seg.steps.slice(0, index + 1).filter(x => !x.drill).length || 1
 
 function overall(c: Ctx) {
   const skills = c.course?.skills ?? []
-  const done = skills.filter(k => ['practiced', 'demonstrated', 'mastered'].includes(skillState(c.state, k.id, c.now))).length
-  return { label: `${done} of ${skills.length} skills`, done, total: skills.length }
+  const states = skills.map(k => skillState(c.state, k.id, c.now))
+  const done = states.filter(st => ['practiced', 'demonstrated', 'mastered'].includes(st)).length
+  // A skill being learned counts half in the bar, so it moves after a right answer; the label stays whole
+  return { label: `${done} of ${skills.length} skills`, done: done + states.filter(st => st === 'learning').length / 2, total: skills.length }
 }
 
 const phaseDone = (c: Ctx, skills: string[]) =>

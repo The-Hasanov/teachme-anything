@@ -52,7 +52,7 @@ p { margin: 0; }
 .label { display: block; color: var(--muted); font-size: .8em; text-transform: uppercase; letter-spacing: .06em; margin-bottom: var(--s1); }
 
 .phase-head { position: relative; padding-right: 34px; display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s3); }
-.phase-head h2 { flex: 1; }
+.phase-head h2 { flex: 1; line-height: 1.2; }
 .phase-head .count { color: var(--muted); font-size: .9em; font-variant-numeric: tabular-nums; }
 .phase.ok .codicon { color: var(--right); }
 .phase.now .codicon { color: var(--accent); }
@@ -77,9 +77,10 @@ p { margin: 0; }
 .status { display: flex; align-items: center; gap: var(--s4); }
 .status p { color: var(--muted); margin-top: 2px; }
 .pulse { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); }
-.status.up .pulse { background: var(--right); animation: glow 2s ease-in-out infinite; }
-.now h2 { margin-bottom: var(--s3); }
-.now .overall { margin-bottom: var(--s3); }
+.status.up .pulse { background: var(--right); }
+.status.up.flash .pulse { animation: glow 2s ease-in-out 1; }
+.control .now h2 { margin-bottom: var(--s3); }
+.control .now .overall { margin-bottom: var(--s3); }
 .result { display: flex; gap: var(--s2); align-items: flex-start; padding: var(--s2) var(--s3); border-radius: 6px; border-left: 3px solid var(--border); background: color-mix(in srgb, var(--fg) 6%, transparent); margin-bottom: var(--s3); }
 .result .codicon { margin-top: 2px; color: var(--muted); }
 .result.right { border-left-color: var(--right); } .result.right .codicon { color: var(--right); }
