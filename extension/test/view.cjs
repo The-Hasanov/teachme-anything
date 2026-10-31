@@ -107,4 +107,24 @@ assert.match(h, /data-choose="1"\s+aria-label="1: What a decorator is, read"><sp
 assert.ok(!/data-choose="2"[^>]*, read/.test(h));
 assert.ok(!/disabled/.test(h), 'every section can be opened, read or not');
 assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'media', 'lesson.css'), 'utf8'), /\.choice \.n \{[^}]*color: var\(--vscode-textLink-foreground/, 'the choice number uses the link colour, readable in both themes');
-console.log('PASS view: highlighting, escaping, output lines, markdown, explore');
+// Code in a step's text: a fence, or lines that are each one `span`, is a code block, not a pill per line
+h = draw({ kind: 'step', title: 'T', actions: [], body: 'Does it compile?\n\n```rust\nlet s = String::from("hi");\n\nprintln!("<{}>", s);\n```\n\nThen `s` moves.' });
+assert.match(h, /<p>Does it compile\?<\/p><pre class="code"><code>/);
+assert.equal((h.match(/<span class="ln">/g) ?? []).length, 3, 'a blank line inside a fence stays in the block');
+assert.match(h, /<span class="t-k">let<\/span> s/);
+assert.ok(!/```|<\{\}>/.test(h), 'no fence marks, nothing becomes HTML');
+assert.match(h, /<p>Then <code>s<\/code> moves\.<\/p>/);
+h = draw({ kind: 'step', title: 'T', actions: [], body: 'A body:\n\n`let s = 1;`\n`s.push("<b>");`' });
+assert.equal((h.match(/<span class="ln">/g) ?? []).length, 2, 'code lines are one block');
+assert.ok(!/<p><code>|<b>/.test(h), 'not a pill each, and still escaped');
+// The dashboard's Lesson view button: an open view shows its step again, with a glow, from the top
+const flashed = [];
+root.querySelector = (sel) => sel === 'main' ? { classList: { add: (c) => flashed.push(c) } } : { disabled: false, focus: () => focused.push(sel) };
+focused.length = 0; scrolls.length = 0; window.scrollY = 300;
+listeners.message({ data: { type: 'flash' } });
+assert.match(root.innerHTML, /<main class="k-step enter">/);
+assert.deepStrictEqual(flashed, ['flash']);
+assert.deepStrictEqual(scrolls, [0]);
+assert.ok(focused.includes('h1'));
+assert.match(fs.readFileSync(require('path').join(__dirname, '..', 'media', 'lesson.css'), 'utf8'), /reduced-motion[^{]*\{[^}]*main\.flash/, 'no glow for reduced motion');
+console.log('PASS view: highlighting, escaping, output lines, markdown, explore, code in text, flash');

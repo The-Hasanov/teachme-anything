@@ -28,7 +28,11 @@
     if (h && ls.length === 1) return `<h3>${inline(h[1])}</h3>`;
     return `<p>${inline(p).replace(/\n/g, '<br>')}</p>`;
   };
-  const md = (s) => esc(s).split(/\n{2,}/).map(block).join('');
+  // A ``` fence, or a paragraph where every line is one `span`, is code: shown as the step's code is
+  const codeBlock = (src, lang) => `<pre class="code"><code>${numbered(hl(src, lang?.toLowerCase()))}</code></pre>`;
+  const para = (p) => /^(`[^`\n]+`\n)+`[^`\n]+`$/.test(p.trim()) ? codeBlock(p.trim().split('\n').map(l => l.slice(1, -1)).join('\n')) : block(esc(p));
+  const md = (s) => String(s ?? '').split(/^```(\w*)[^\n]*\n([\s\S]*?)^```[ \t]*$/m).map((p, i, all) =>
+    i % 3 === 2 ? codeBlock(p.replace(/\n$/, ''), all[i - 1]) : i % 3 === 0 ? p.split(/\n{2,}/).filter(b => b.trim()).map(para).join('') : '').join('');
   const COMMENT = { python: '#', py: '#', sh: '#', bash: '#', shell: '#', powershell: '#', ps1: '#', ruby: '#', yaml: '#', toml: '#', r: '#', sql: '--', js: '//', javascript: '//', ts: '//', typescript: '//', java: '//', c: '//', cpp: '//', cs: '//', go: '//', rust: '//', kotlin: '//', swift: '//', php: '//' };
   const KW = {
     python: 'and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield',
@@ -156,6 +160,12 @@
 
   window.addEventListener('message', (ev) => {
     const m = ev.data;
+    // The dashboard's Lesson view button: the view may already be open, so it shows the step again with a glow
+    if (m.type === 'flash' && screen) {
+      draw(true);
+      root.querySelector('main')?.classList.add('flash');
+      root.querySelector('h1')?.focus({ preventScroll: true });
+    }
     if (m.type === 'screen') {
       const n = m.screen;
       // Explore's next section keeps the title, so a new place or text without a verdict is a new screen too

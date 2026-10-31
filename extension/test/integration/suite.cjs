@@ -202,6 +202,13 @@ async function run() {
         assert.ok(got.events.some(e => e.type === 'press' && e.press.action === 'check'), JSON.stringify(got.events));
     });
 
+    await check('dashboard Lesson view button opens the lesson view when the side bar is closed', async () => {
+        await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+        await until(() => !ext.exports.lesson.visible());
+        dashboard.click('[data-lesson]');
+        await until(() => ext.exports.lesson.visible(), 5000);
+    });
+
     await check('dashboard tabs switch back: a click on Path shows the sections again', async () => {
         await clickAndWait('[data-tab="path"]', r => r.tab === 'path' && r.text.includes('Structs, enums and errors'));
         await vscode.window.tabGroups.close(dashboards());

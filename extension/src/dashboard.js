@@ -6,7 +6,7 @@ const VIEW_TYPE = 'teachme.dashboard';
 const RESET = 'Reset';
 const RESET_FRESH = 'Reset and write new lessons';
 
-function registerDashboard(context, layout, channel) {
+function registerDashboard(context, layout, channel, showLesson) {
     const media = vscode.Uri.joinPath(context.extensionUri, 'media');
     const codicons = vscode.Uri.joinPath(context.extensionUri, 'node_modules', '@vscode', 'codicons', 'dist');
     let panel;
@@ -40,7 +40,7 @@ function registerDashboard(context, layout, channel) {
             if (m.type === 'ready') post();
             if (m.type === 'rendered') { rendered = { tab: m.tab, text: m.text }; renders.forEach(fn => fn(rendered)); }
             if (m.type === 'press') channel.push({ type: 'press', press: m.press, t: Date.now() });
-            if (m.type === 'lesson') vscode.commands.executeCommand('teachme.lesson.focus');
+            if (m.type === 'lesson') showLesson().then(undefined, e => vscode.window.showErrorMessage(`Teach Me: the lesson view cannot open: ${e.message}`));
             if (m.type === 'reset') void confirmReset(m.phase, m.title);
         });
         p.onDidDispose(() => { panel = undefined; });

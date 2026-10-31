@@ -87,8 +87,10 @@ details.more summary { cursor: pointer; width: fit-content; }
 .keys { margin: var(--tm-s3) 0 0; color: var(--tm-muted); font-size: .8em; opacity: .8; }
 .offline { color: var(--tm-muted); }
 main.enter { animation: tm-in 120ms ease-out; }
+main.flash { animation: tm-in 120ms ease-out, tm-flash 1s ease-out; }
+@keyframes tm-flash { from { box-shadow: inset 0 0 0 2px var(--tm-accent); } }
 @keyframes tm-in { from { opacity: 0; transform: translateY(2px); } }
-@media (prefers-reduced-motion: reduce) { main.enter, .progress .bar > i, .result.wait .codicon { animation: none; transition: none; } }
+@media (prefers-reduced-motion: reduce) { main.enter, main.flash, .progress .bar > i, .result.wait .codicon { animation: none; transition: none; } }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 .label { display: block; color: var(--tm-muted); font-size: .85em; margin-top: var(--tm-s3); }
