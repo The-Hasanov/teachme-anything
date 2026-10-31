@@ -18,6 +18,8 @@ export type Ctx = {
   explore?: Explore
   // Looking back at an earlier step (Previous, or a finished lesson opened from the path): shown read-only
   peek?: { seg: string; step: number }
+  // Explore readings written here: listed on the path with lessons, so everything studied stays one tap away
+  readings?: { id: string; topic: string; read: number; total: number }[]
   // Ask on this step: the agent's explanation once its turn ended, until then the question being answered
   asked?: { question?: string; answer?: string }
 }
@@ -384,6 +386,12 @@ export function press(c: Ctx, p: Press): Out {
     const skill = current(c)?.step.skill
     return { events: [], effects: [{ kind: 'explore', ...(skill && s.stage === 'lesson' ? { topic: skillTitle(c, skill) } : {}) }] }
   }
+  if (action?.startsWith('read:') && ['curriculum', 'recap', 'lesson'].includes(s.stage)) {
+    const r = c.readings?.find(x => x.id === action.slice(5))
+    return r ? { events: [], effects: [{ kind: 'explore', topic: r.topic }] } : NONE
+  }
+  // A warm-up or the check before the next lesson can be left for the path; Continue there comes back to it
+  if (action === 'curriculum' && s.stage === 'lesson' && s.warm?.items.length) return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
   if (action?.startsWith('reset') && ['curriculum', 'recap', 'lesson'].includes(s.stage)) return reset(c, action.split(':')[1], action.split(':')[2] === 'fresh')
   if (s.stage === 'curriculum' || s.stage === 'recap') {
     if (action === 'start') {
@@ -608,6 +616,7 @@ export function screen(c: Ctx): Screen {
       ...(!segmentOrder(course).some(id => c.segments[id])
         ? { result: { tone: 'wait' as const, text: 'Your first lesson is being written and checked. About a minute.' }, actions: [PROGRESS, EXPLORE] }
         : { ...nextParts(c), actions: [...nextActions(c, s.pos ? 'Continue' : `Start ${course.phases[0]?.title ?? ''}`.trim()), PROGRESS, EXPLORE] }),
+      ...readingsGroup(c),
     }
   }
   if (s.stage === 'recap') {
@@ -632,7 +641,7 @@ export function screen(c: Ctx): Screen {
     const n = s.warm.items.length
     const gate = !!s.warm.gate
     return {
-      kind: 'question', title: step.title, progress: { label: `${gate ? 'Before you move on' : 'Warm-up'} · ${s.warm.i + 1} of ${n}`, done: s.warm.i, total: n },
+      kind: 'question', title: step.title, progress: { label: `${gate ? 'Before you move on' : 'Warm-up'} · ${s.warm.i + 1} of ${n}`, done: s.warm.i, total: n, action: 'curriculum' },
       body: step.body, ...(step.code ? { code: { lang: step.code.lang, source: step.code.source } } : {}),
       ...answerParts(step, res, s.draft[rk]),
       ...(res ? { result: { tone: res.tone, text: res.text } } : {}),
@@ -834,6 +843,14 @@ function peekScreen(c: Ctx, p: { seg: string; step: number }): Screen | undefine
   }
 }
 
+// Every reading written here, each one tap away from the path, marked by how much of it was read
+const readingsGroup = (c: Ctx) => c.readings?.length ? {
+  groups: [{
+    title: 'Your readings',
+    lines: c.readings.map(r => ({ mark: r.read >= r.total ? 'ok' as const : r.read ? 'half' as const : 'todo' as const, text: r.topic, detail: `${r.read} of ${r.total} sections read`, action: `read:${r.id}` })),
+  }],
+} : {}
+
 const LESSON_MARK = { done: 'ok', now: 'now', ready: 'todo', todo: 'todo', writing: 'run', failed: 'fail' } as const
 const LESSON_NOTE: Partial<Record<keyof typeof LESSON_MARK, string>> = { writing: 'Being written', failed: 'Could not be written' }
 const PROGRESS = act('progress', 'Progress', false, 'g')
@@ -846,8 +863,8 @@ const EXPLORE = act('explore', 'Explore', false, 'e')
 // The topics on Explore's first screen, numbered as shown: readings written here first, then suggestions
 export const exploreTopics = (x: Explore) => [
   ...x.library.map(l => ({ topic: l.topic, label: `${l.topic} · ${l.read} of ${l.total} read` })),
-  ...x.suggest.filter(t => !x.library.some(l => l.topic.toLowerCase() === t.toLowerCase())).map(t => ({ topic: t, label: t })),
-].slice(0, 8)
+  ...x.suggest.filter(t => !x.library.some(l => l.topic.toLowerCase() === t.toLowerCase())).map(t => ({ topic: t, label: t })).slice(0, Math.max(3, 8 - x.library.length)),
+]
 
 // Explore: free reading, in sections the learner moves through at will. No questions, no grades.
 function exploreScreen(x: Explore, s: LearnerState): Screen {

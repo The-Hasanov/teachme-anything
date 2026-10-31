@@ -88,7 +88,7 @@ async function deviceOf($: EngineInterface) {
 
 async function ctx($: EngineInterface): Promise<Ctx> {
   const s = sess!
-  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, peek: s.peek, preparing: !!s.preparing, prepSince: s.preparing ? s.prepSince : undefined, prepError: s.prepError, build: s.build?.open ? s.build : undefined, explore: s.explore, asked: askedHere(s) }
+  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, peek: s.peek, readings: s.readings && Object.values(s.readings).map(r => ({ id: r.id, topic: r.topic, read: s.state.read[r.id]?.length ?? 0, total: r.sections.length })), preparing: !!s.preparing, prepSince: s.preparing ? s.prepSince : undefined, prepError: s.prepError, build: s.build?.open ? s.build : undefined, explore: s.explore, asked: askedHere(s) }
 }
 
 const askedHere = (s: Session) => {
@@ -504,6 +504,7 @@ async function open($: EngineInterface, root: string) {
     log: newLog(root, device), metrics: newLog(root, device, 'metrics'), welcome: l.state.stage === 'lesson', env: await probeEnvCached($),
     vscode: vsCodeFor($, root),
   }
+  await readings($, sess)
   await refresh($)
   // A finished segment whose next one is missing: the author of an earlier session is gone, so write it now
   const done = l.state.done
@@ -1166,7 +1167,7 @@ export const registerLesson: Register = on => {
               ? <Text dimColor>✓ {ch.n}  {ch.text}</Text>
               : ch.mark || sc.choices!.some(x => x.mark) || (sc.result && sc.result.tone !== 'info')
               ? <Text color={ch.mark === 'right' || ch.mark === 'key' ? 'success' : ch.mark === 'wrong' ? 'warning' : undefined} dimColor={!ch.mark}>{ch.mark === 'right' ? '✓' : ch.mark === 'wrong' ? '✗' : ch.mark === 'key' ? '✓' : ' '} {ch.n}  {ch.text}</Text>
-              : <Button key={`choose-${ch.n}`} hotkey={String(ch.n)} plain onPress={go({ choose: ch.n })}>{`${ch.here ? '▸ ' : ''}${ch.done ? '✓ ' : ''}${ch.text}${ch.here ? ' (here)' : ''}`}</Button>}
+              : <Button key={`choose-${ch.n}`} {...(ch.n < 10 ? { hotkey: String(ch.n) } : {})} plain onPress={go({ choose: ch.n })}>{`${ch.here ? '▸ ' : ''}${ch.done ? '✓ ' : ''}${ch.text}${ch.here ? ' (here)' : ''}`}</Button>}
             {ch.code && ch.code.trim() !== ch.text.trim() && <Box paddingX={2}><Code source={ch.code} wrap="wrap" /></Box>}
             {ch.mark && ch.why && <Text dimColor>    {ch.why}</Text>}
           </Box>

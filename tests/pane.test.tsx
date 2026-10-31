@@ -627,7 +627,7 @@ test('#14 Ask sends the step to the agent, and its explanation shows under the s
 const TO_TRACE = ['choose-1', 'choose-1', 'choose-1', 'act-continue', 'act-start', 'act-next', 'act-frame-next', 'act-frame-next', 'act-next', 'choose-1', 'act-next']
 type Drawn = { findAll(q: { type: 'Text' | 'Markdown' | 'Button' }): Promise<readonly { text?: string }[]> }
 const keys = async (ui: Drawn) => (await ui.findAll({ type: 'Button' })).map(b => (b as unknown as { key: string }).key)
-const shown = async (ui: Drawn) => [...await ui.findAll({ type: 'Text' }), ...await ui.findAll({ type: 'Markdown' })].map(t => t.text).join(' | ')
+const shown = async (ui: Drawn) => [...await ui.findAll({ type: 'Text' }), ...await ui.findAll({ type: 'Markdown' }), ...await ui.findAll({ type: 'Button' })].map(t => t.text).join(' | ')
 
 test('#lost-exam a question in the chat keeps the half-filled answer on screen, still answerable', async ($, on) => {
   const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
@@ -698,6 +698,27 @@ test('Previous in the pane: earlier steps read-only, then Back to the half-answe
   expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toContain('Back to Trace a loop in a loop')
   await ui.press({ key: 'act-back' })
   expect(await shown(ui)).toBe(before)
+  await ui.unmount()
+})
+
+test('every reading studied stays reachable: all of them in Explore and on the path, and one opens from the path', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  agents($, on)
+  for (let i = 0; i < 10; i++) w.files[`${ROOT}/.teachme/read/topic-${i}.json`] = JSON.stringify({ ...reading, id: `topic-${i}`, topic: `Topic ${i}`, sections: reading.sections.map(x => ({ ...x, code: undefined })) })
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await seed($, w.files, bigo)
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  for (const key of ['choose-1', 'choose-1', 'choose-1', 'act-continue']) await ui.press({ key })
+  const texts = async () => (await ui.findAll({ type: 'Button' })).map(b => b.text)
+  expect((await texts()).filter(t => /^Topic \d$/.test(t))).toHaveLength(10)
+  await ui.press({ key: 'act-explore' })
+  expect((await texts()).filter(t => /^Topic \d · 0 of 3 read$/.test(t))).toHaveLength(10)
+  await ui.press({ key: 'act-back' })
+  await ui.press({ key: 'line-read:topic-7' })
+  expect(await shown(ui)).toMatch(/Section 1 of 3[\s\S]*Topic 7/)
+  expect(await texts()).toContain('Back to your path')
+  await ui.press({ key: 'act-back' })
+  expect(await shown(ui)).toMatch(/Your path to:[\s\S]*Your readings/)
   await ui.unmount()
 })
 

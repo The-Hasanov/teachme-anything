@@ -417,6 +417,18 @@ test('Path opens a finished lesson read-only from its first step; Back goes to t
   expect(l.go({ action: 'open:merge-1' }).effects).toEqual([])
 })
 
+test('Path lists every reading written here, each one tap from opening; studied lessons and readings stay reachable', () => {
+  const l = learner()
+  l.toLesson()
+  l.c.readings = Array.from({ length: 10 }, (_, i) => ({ id: `r${i}`, topic: `Topic ${i}`, read: i % 3, total: 2 }))
+  l.go({ action: 'curriculum' })
+  const g = screen(l.c).groups!.find(x => x.title === 'Your readings')!
+  expect(g.lines).toHaveLength(10)
+  expect(g.lines.slice(0, 3).map(x => `${x.mark}:${x.detail}`)).toEqual(['todo:0 of 2 sections read', 'half:1 of 2 sections read', 'ok:2 of 2 sections read'])
+  expect(l.go({ action: g.lines[9]!.action! }).effects).toEqual([{ kind: 'explore', topic: 'Topic 9' }])
+  expect(l.go({ action: 'read:nope' }).effects).toEqual([])
+})
+
 test('the dashboard path: lessons done, the current one with its step, the next one being written or failed', () => {
   const l = learner()
   l.toLesson()

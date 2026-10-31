@@ -158,6 +158,25 @@ test('a new session resumes the check before the next lesson as it was left, ans
   expect(JSON.stringify([l.c.state.warm, screen(l.c).progress, screen(l.c).choices, screen(l.c).result, screen(l.c).actions])).toBe(check)
 })
 
+test('the check before the next lesson can be left for the path, and Continue there returns to it as it was', () => {
+  const seg = bigo.bigo1
+  const trace = seg.steps.findIndex(x => x.kind === 'trace')
+  const l = at(bigo.course, bigo.segments, seg, trace)
+  const step = seg.steps[trace]!
+  for (const k of step.key!) l.go({ choose: k === step.key![0] ? ((k + 1) % step.choices!.length) + 1 : k + 1 })
+  const last = seg.steps.findLastIndex(x => !x.drill)
+  l.take({ events: [{ ts: l.c.now, type: 'enter', seg: seg.id, step: last }], effects: [] })
+  l.c.state = { ...l.c.state, solved: { ...l.c.state.solved, [seg.steps[last]!.id]: true }, result: { ...l.c.state.result, [seg.steps[last]!.id]: { tone: 'right', text: '' } } }
+  l.go({ action: 'next' })
+  l.go({ choose: 1 })
+  expect(screen(l.c).progress?.action).toBe('curriculum')
+  const check = JSON.stringify([l.c.state.warm, screen(l.c)])
+  l.go({ action: 'curriculum' })
+  expect(screen(l.c).kind).toBe('curriculum')
+  l.go({ action: 'start' })
+  expect(JSON.stringify([l.c.state.warm, screen(l.c)])).toBe(check)
+})
+
 test('the host handles every effect the engine asks for (#14)', () => {
   const asked = new Set<string>()
   everyStep((lib, seg, i, step) => {
