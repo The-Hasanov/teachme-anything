@@ -106,4 +106,5 @@ h = draw({ kind: 'explore', title: 'Python decorators', body: '8 sections. Open 
 assert.match(h, /data-choose="1"\s+aria-label="1: What a decorator is, read"><span class="n">1<\/span><span>What a decorator is <span class="done"><span class="codicon codicon-pass"/);
 assert.ok(!/data-choose="2"[^>]*, read/.test(h));
 assert.ok(!/disabled/.test(h), 'every section can be opened, read or not');
+assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'media', 'lesson.css'), 'utf8'), /\.choice \.n \{[^}]*color: var\(--vscode-textLink-foreground/, 'the choice number uses the link colour, readable in both themes');
 console.log('PASS view: highlighting, escaping, output lines, markdown, explore');

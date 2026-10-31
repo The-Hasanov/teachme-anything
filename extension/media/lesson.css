@@ -53,7 +53,7 @@ ul.lines .detail { grid-column: 2; color: var(--tm-muted); font-size: .9em; }
 .choice { display: grid; grid-template-columns: 22px 1fr; gap: 0 var(--tm-s2); width: 100%; text-align: left; padding: var(--tm-s2) var(--tm-s3); color: var(--tm-fg); background: var(--tm-surface); border: 1px solid var(--tm-edge); border-radius: var(--tm-card-radius); box-shadow: 0 1px 2px color-mix(in srgb, var(--vscode-foreground) 14%, transparent); font: inherit; cursor: pointer; }
 .choice:hover:not(:disabled) { border-color: var(--tm-focus); }
 .choice:focus-visible, .btn:focus-visible, .link:focus-visible, summary:focus-visible { outline: 1px solid var(--tm-focus); outline-offset: 2px; }
-.choice .n { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: color-mix(in srgb, var(--tm-accent) 16%, transparent); color: var(--tm-accent); font-weight: 600; }
+.choice .n { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: color-mix(in srgb, var(--tm-accent) 16%, transparent); color: var(--vscode-textLink-foreground, var(--tm-accent)); font-weight: 600; }
 .choice.right .n, .choice.key .n, .choice .done { color: var(--tm-right); }
 .choice.wrong .n { color: var(--tm-amber); }
 .choice .done { vertical-align: text-bottom; }

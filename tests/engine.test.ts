@@ -304,7 +304,7 @@ test('progress is read from the answers: accuracy, first try, time, the curve, s
   const learning = git.course.skills.filter(k => skillState(l.c.state, k.id, l.c.now) === 'learning')
   expect(learning.length).toBeGreaterThan(0)
   expect(sc.groups?.[3]?.lines.filter(x => x.mark === 'half').map(x => x.text)).toEqual(learning.map(k => k.title))
-  expect(sc.progress).toEqual({ label: `0 of ${git.course.skills.length} skills`, done: learning.length / 2, total: git.course.skills.length })
+  expect(sc.progress).toEqual({ label: `0 of ${git.course.skills.length} skills · ${learning.length} learning`, done: learning.length / 2, total: git.course.skills.length })
   expect(screen({ ...learner().c, progress: true }).body).toMatch(/^No answers yet/)
 })
 
