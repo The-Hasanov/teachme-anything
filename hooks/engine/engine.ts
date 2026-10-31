@@ -901,8 +901,9 @@ function overall(c: Ctx) {
   const skills = c.course?.skills ?? []
   const states = skills.map(k => skillState(c.state, k.id, c.now))
   const done = states.filter(st => ['practiced', 'demonstrated', 'mastered'].includes(st)).length
-  // A skill being learned counts half in the bar, so it moves after a right answer; the label stays whole
-  return { label: `${done} of ${skills.length} skills`, done: done + states.filter(st => st === 'learning').length / 2, total: skills.length }
+  const learning = states.filter(st => st === 'learning').length
+  // A skill being learned counts half in the bar, so it moves after a right answer; the label says why
+  return { label: `${done} of ${skills.length} skills${learning ? ` · ${learning} learning` : ''}`, done: done + learning / 2, total: skills.length }
 }
 
 const phaseDone = (c: Ctx, skills: string[]) =>
