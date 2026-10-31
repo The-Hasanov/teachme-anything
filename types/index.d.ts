@@ -10,7 +10,7 @@ export type Screen = {
   output?: string
   compare?: { with: string; text: string; stops: string }
   input?: { placeholder: string }
-  choices?: { n: number; text: string; code?: string; mark?: 'right' | 'wrong' | 'key'; why?: string; used?: boolean }[]
+  choices?: { n: number; text: string; code?: string; mark?: 'right' | 'wrong' | 'key'; why?: string; used?: boolean; done?: boolean }[]
   built?: { text: string; mark?: 'right' | 'wrong' }[]
   table?: { columns: string[]; rows: { cells: string[]; at?: number; mark?: 'right' | 'wrong' }[] }
   frame?: { i: number; n: number; note: string; code?: string; state?: string }

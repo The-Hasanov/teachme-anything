@@ -558,7 +558,7 @@ export function screen(c: Ctx): Screen {
     return {
       kind: 'setup', title: 'Your setup',
       lines: course.setup.map(r => ({ mark: mark(s.setup[r.id]?.status), text: r.title, ...(s.setup[r.id]?.note ? { detail: s.setup[r.id]!.note } : {}) })),
-      ...(c.busy ? { result: { tone: 'wait' as const, text: c.busy } } : tools ? { result: { tone: 'wait' as const, text: 'Teach Me installs and sets up what is missing for you.' } } : {}),
+      ...(c.busy ? { result: { tone: 'wait' as const, text: c.busy } } : tools ? { result: { tone: 'info' as const, text: 'Teach Me installs and sets up what is missing for you.' } } : {}),
       actions: c.busy ? [] : done ? [act('continue', 'Continue', true, 'enter')]
         : needs ? [act('heal', tools ? 'Install everything' : 'Fix it for me', true, 'enter'), act('setup', 'Check again')]
         : [act('setup', 'Set up', true, 'enter')],
@@ -778,7 +778,7 @@ function exploreScreen(x: Explore, s: LearnerState): Screen {
   const seen = new Set(s.read[r.id] ?? [])
   if (x.contents) return {
     kind: 'explore', title, body: `${r.sections.length} sections. Open any of them.`,
-    choices: r.sections.map((sec, i) => ({ n: i + 1, text: `${seen.has(i) ? '✓ ' : ''}${sec.title}` })),
+    choices: r.sections.map((sec, i) => ({ n: i + 1, text: sec.title, ...(seen.has(i) ? { done: true } : {}) })),
     actions: [act('read', 'Back to the reading', true, 'b')],
   }
   const i = Math.min(x.section, r.sections.length - 1)
@@ -883,7 +883,10 @@ export function dashboard(c: Ctx): Dashboard | undefined {
     return { id: p.id, title: p.title, mark, done, total: lessons.length, lessons }
   })
   const done = phases.reduce((n, p) => n + p.done, 0)
-  return { title: course.subject, goal: course.goal, overall: { label: `${done} of ${order.length} lessons`, done, total: order.length }, phases }
+  // The lesson under way counts by its steps, so the ring moves before a whole lesson is done
+  const seg = now ? c.segments[now] : undefined
+  const part = seg && s.pos ? (stepNumber(seg, s.pos.step) - 1) / Math.max(1, seg.steps.filter(x => !x.drill).length) : 0
+  return { title: course.subject, goal: course.goal, overall: { label: `${done} of ${order.length} lesson${order.length === 1 ? '' : 's'}`, done: done + part, total: order.length }, phases }
 }
 
 const stepNumber = (seg: Segment, index: number) => seg.steps.slice(0, index + 1).filter(x => !x.drill).length || 1

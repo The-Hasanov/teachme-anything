@@ -5,11 +5,13 @@ const src = fs.readFileSync(require('path').join(__dirname, '..', 'media', 'dash
 const listeners = {};
 const posted = [];
 let saved;
-let click;
-const root = { innerHTML: '', innerText: '', querySelector: () => null, querySelectorAll: () => [], addEventListener: (t, f) => { if (t === 'click') click = f; } };
+let click, keydown;
+const focused = [];
+const root = { innerHTML: '', innerText: '', className: '', querySelector: (sel) => sel.startsWith('[data-') ? { focus: () => focused.push(sel) } : null, querySelectorAll: () => [], addEventListener: (t, f) => { if (t === 'click') click = f; if (t === 'keydown') keydown = f; } };
+const document = { getElementById: () => root, activeElement: null };
 const sandbox = {
   acquireVsCodeApi: () => ({ getState: () => undefined, setState: (s) => { saved = s; }, postMessage: (m) => posted.push(m) }),
-  document: { getElementById: () => root },
+  document,
   window: { addEventListener: (t, f) => { listeners[t] = f; } },
   requestAnimationFrame: (f) => f(),
 };
@@ -52,7 +54,7 @@ assert.deepStrictEqual(saved, { tab: 'control' }, 'the open tab is remembered');
 assert.match(h, /data-tab="control" aria-selected="true"/);
 assert.match(h, /Connected to Claude Code/);
 assert.match(h, /Your turn: shout/);
-assert.match(h, /class="result wrong">Not yet/);
+assert.match(h, /class="result wrong"><i class="codicon codicon-warning" aria-hidden="true"><\/i><span>Not yet<\/span>/, 'the tone is a border and an icon; the text keeps the normal color');
 assert.match(h, /<button class="btn primary" data-press="check" >Check<\/button>/);
 assert.match(h, /data-reset="" data-title="Rust &lt;fundamentals&gt;"/, 'the whole course can be reset');
 
@@ -83,4 +85,33 @@ assert.deepStrictEqual(posted, [], 'a disabled button sends nothing');
 press({ tab: 'path' });
 assert.match(root.innerHTML, /data-tab="path" aria-selected="true"/);
 
-console.log('PASS dashboard: path, control, tab switch, buttons, escaping');
+// Tabs work from the keyboard: only the open tab is in the Tab order, arrows move between them and focus follows
+h = root.innerHTML;
+assert.match(h, /id="tab-path" data-tab="path" aria-selected="true" aria-controls="panel" tabindex="0"/);
+assert.match(h, /id="tab-control" data-tab="control" aria-selected="false" aria-controls="panel" tabindex="-1"/);
+assert.match(h, /<main class="tab-body" id="panel" role="tabpanel" aria-labelledby="tab-path"/);
+const key = (k) => { let stopped = false; keydown({ key: k, target: { dataset: { tab: 'x' } }, preventDefault: () => { stopped = true; } }); return stopped; };
+for (const [k, want] of [['ArrowRight', 'control'], ['ArrowRight', 'path'], ['ArrowLeft', 'control'], ['Home', 'path'], ['End', 'control']]) {
+  focused.length = 0;
+  assert.ok(key(k), `${k} is handled`);
+  assert.match(root.innerHTML, new RegExp(`data-tab="${want}" aria-selected="true"`), `${k} opens ${want}`);
+  assert.deepStrictEqual(focused, [`[data-tab="${want}"]`], 'focus moves to the open tab');
+}
+focused.length = 0;
+press({ tab: 'path' });
+assert.deepStrictEqual(focused, ['[data-tab="path"]'], 'a click or Enter on a tab keeps focus on it');
+assert.equal(root.className, 'tab', 'a tab change plays the tab entrance only');
+
+// A screen update redraws without entrances and puts focus back where it was
+press({ tab: 'control' });
+focused.length = 0;
+document.activeElement = { dataset: { press: 'check' } };
+send({ data, screen, up: true });
+assert.equal(root.className, '', 'no entrance replays on an update');
+assert.deepStrictEqual(focused, ['[data-press="check"]']);
+document.activeElement = null;
+
+press({ tab: 'path' });
+assert.match(send({ data: { ...data, phases: [{ ...data.phases[2], total: 1 }] }, screen, up: true }), /0 of 1 lesson</, 'one lesson is singular');
+
+console.log('PASS dashboard: path, control, tab switch, keyboard tabs, focus kept, buttons, escaping');
