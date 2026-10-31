@@ -460,6 +460,7 @@ test('Explore with no course: open a topic, the reading is checked before it is 
   await ui.press({ key: 'choose-3' })
   expect(await texts()).toMatch(/Section 3 of 3[\s\S]*Drop[\s\S]*To explore next: Borrowing · Lifetimes · Smart pointers/)
   expect(await buttons()).toEqual(['Other topics', 'Previous', 'Contents', 'Go deeper', 'Close', 'Open in VS Code'])
+  expect(JSON.stringify((await ui.findAll({ type: 'Button' })).find(b => b.text === 'Previous'))).toMatch(/"hotkey":"p"/)
   await ui.press({ key: 'act-deeper' })
   await relay()
   expect(prompts()[1]).toMatch(/goes deeper into "Drop", a section of the reading "Rust ownership"/)

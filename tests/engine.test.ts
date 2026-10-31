@@ -52,6 +52,9 @@ test('intake, setup and curriculum take one click each, then the first step and 
   expect(screen(l.c).actions.map(a => a.id)).toEqual(['setup'])
   expect(l.go({ action: 'continue' }).events).toEqual([])
   expect(l.go({ action: 'setup' }).effects).toEqual([{ kind: 'setup' }])
+  // Nothing to wait for here: the learner clicks Install everything
+  l.take({ events: [{ ts: l.c.now, type: 'setup', req: git.course.setup[0]!.id, status: 'missing' }], effects: [] })
+  expect(screen(l.c).result).toEqual({ tone: 'info', text: 'Teach Me installs and sets up what is missing for you.' })
   l.take({ events: git.course.setup.map(r => ({ ts: l.c.now, type: 'setup' as const, req: r.id, status: 'ok' as const })), effects: [] })
   expect(screen(l.c).actions.map(a => a.id)).toEqual(['continue'])
   l.go({ action: 'continue' })
@@ -356,6 +359,9 @@ test('the dashboard path: lessons done, the current one with its step, the next 
       { id: 'merging', title: 'Merging', mark: 'todo', done: 0, total: 1, lessons: [{ title: 'Not written yet', status: 'todo' }] },
     ],
   })
+  // Steps into the lesson move the overall share before the lesson is done
+  l.go({ action: 'next' })
+  expect(dashboard(l.c)?.overall).toEqual({ label: '0 of 2 lessons', done: 1 / steps, total: 2 })
   l.take({ events: [{ ts: l.c.now, type: 'stage', stage: 'recap' }], effects: [] })
   l.c.preparing = true
   expect(dashboard(l.c)?.phases.map(p => [p.mark, p.lessons[0]!.status])).toEqual([['ok', 'done'], ['now', 'writing']])

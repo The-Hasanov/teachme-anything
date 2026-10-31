@@ -1047,6 +1047,8 @@ export const registerLesson: Register = on => {
     if (!sc) return <Text dimColor>Say "teach me &lt;subject&gt;" to start.</Text>
     const go = (p: Press) => () => { void dispatch($, p) }
     const tone = (t?: string) => t === 'right' ? 'success' : t === 'wrong' ? 'warning' : undefined
+    // Only letters can be hotkeys here; Explore's Previous (← in the view) takes P, free on that screen
+    const hotkey = (k?: string) => k === 'left' && sc.kind === 'explore' ? 'p' : k && /^[a-z]$/.test(k) ? k : undefined
     const glyph = { ok: '✓', todo: '○', fail: '⚠', run: '…', now: '●' } as const
     const markColor = { ok: 'success', todo: undefined, fail: 'warning', run: undefined, now: ACCENT } as const
     const line = (l: Line, key: string) => (
@@ -1147,7 +1149,7 @@ export const registerLesson: Register = on => {
               ? <Text dimColor>✓ {ch.n}  {ch.text}</Text>
               : ch.mark || (sc.result && sc.result.tone !== 'info')
               ? <Text color={ch.mark === 'right' || ch.mark === 'key' ? 'success' : ch.mark === 'wrong' ? 'warning' : undefined} dimColor={!ch.mark}>{ch.mark === 'right' ? '✓' : ch.mark === 'wrong' ? '✗' : ch.mark === 'key' ? '✓' : ' '} {ch.n}  {ch.text}</Text>
-              : <Button key={`choose-${ch.n}`} hotkey={String(ch.n)} plain onPress={go({ choose: ch.n })}>{ch.text}</Button>}
+              : <Button key={`choose-${ch.n}`} hotkey={String(ch.n)} plain onPress={go({ choose: ch.n })}>{ch.done ? `✓ ${ch.text}` : ch.text}</Button>}
             {ch.code && ch.code.trim() !== ch.text.trim() && <Box paddingX={2}><Code source={ch.code} wrap="wrap" /></Box>}
             {ch.mark && ch.why && <Text dimColor>    {ch.why}</Text>}
           </Box>
@@ -1160,12 +1162,12 @@ export const registerLesson: Register = on => {
         )}
         {sc.result && (sc.result.tone === 'right' || sc.result.tone === 'wrong'
           ? <Box borderStyle="round" borderColor={tone(sc.result.tone)} paddingX={1}><Text color={tone(sc.result.tone)}>{sc.result.tone === 'right' ? '✓ ' : '⚠ '}{sc.result.text}</Text></Box>
-          : sc.result.tone === 'wait' ? <Text dimColor italic>… {sc.result.text}</Text>
+          : sc.result.tone === 'wait' ? <Text dimColor>… {sc.result.text}</Text>
           : <Markdown text={sc.result.text} />)}
         {(sc.actions.length > 0 || e.surface === 'terminal') && (
           <Box flexDirection="row" flexWrap="wrap" gap="sm">
             {sc.actions.map(a => (
-              <Button key={`act-${a.id}`} variant={a.primary ? 'primary' : 'secondary'} {...(a.key && /^[a-z]$/.test(a.key) ? { hotkey: a.key } : {})} onPress={go({ action: a.id })}>{a.label}</Button>
+              <Button key={`act-${a.id}`} variant={a.primary ? 'primary' : 'secondary'} {...(hotkey(a.key) ? { hotkey: hotkey(a.key) } : {})} onPress={go({ action: a.id })}>{a.label}</Button>
             ))}
             {e.surface === 'terminal' && <Button key="open-vscode" variant="secondary" hotkey="v" onPress={() => { void openInVsCode($) }}>Open in VS Code</Button>}
           </Box>
