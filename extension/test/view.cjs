@@ -66,11 +66,13 @@ assert.match(h, /<div class="output">[\s\S]*<code>add<\/code>/);
 assert.match(h, /<button class="btn" data-action="next">Next section<span class="kbd">Enter<\/span><\/button>/);
 for (const [id, key] of [['prev', '←'], ['contents', 'C'], ['deeper', 'D'], ['home', 'E'], ['back', 'B']]) assert.match(h, new RegExp(`data-action="${id}" aria-keyshortcuts="${key}"`), `${id} has its key`);
 for (const [id, key] of [['prev', '←'], ['contents', 'C']]) assert.match(h, new RegExp(`data-action="${id}" aria-keyshortcuts="${key}">[^<]+<span class="kbd">${key}</span></button>`), `${id} shows its key`);
-assert.match(h, /<p class="keys">\? keys<\/p>/, 'a quiet hint says ? lists the keys');
+assert.ok(!/class="keys"/.test(h), 'the key list shows only when ? opens it');
 const keydown = (key) => listeners.keydown({ key, target: { tagName: 'BODY' }, preventDefault() {} });
 keydown('?');
 assert.match(root.innerHTML, /<p class="keys">Enter Next section · ← Previous · C Contents · D Go deeper · E Other topics · B Close · \? hide<\/p>/, "the key list is this screen's buttons");
 keydown('?');
+assert.ok(!/class="keys"/.test(root.innerHTML), '? closes it again');
+assert.match(draw({ kind: 'progress', title: 'Your progress', groups: [{ title: 'Skills', lines: [{ mark: 'half', text: 'Branches' }, { mark: 'now', text: 'Merging' }] }], actions: [] }), /<span class="mark-half"><span class="codicon codicon-color-mode" aria-label="learning" role="img"><\/span><\/span><span>Branches/, 'a skill being learned has its own half mark');
 
 // Explore's next section keeps the title: still a new screen, read from the top
 const section = { kind: 'explore', title: 'Python decorators', progress: { label: 'Section 3 of 8', done: 3, total: 8 }, body: 'Three', actions: [{ id: 'next', label: 'Next section', primary: true, key: 'enter' }] };

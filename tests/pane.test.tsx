@@ -334,6 +334,13 @@ test('the terminal pane draws a trace table, a reorder answer and a stepper fram
   ui = await show(place(bigo.course, bigo.bigo1, 'o2', [{ action: 'frame-next' }]))
   expect((await ui.find({ type: 'Text', text: 'Frame 2 of 6' }))).toBeTruthy()
   expect((await ui.find({ type: 'Button', text: 'Next frame' }))).toBeTruthy()
+  // ← is not a letter: Previous frame takes P, unless another button on the screen already has it
+  const hotkeyOf = async (text: string) => JSON.stringify((await ui.findAll({ type: 'Button' })).find(b => b.text === text)).match(/"hotkey":"(\w)"/)?.[1]
+  expect(await hotkeyOf('Previous frame')).toBe('p')
+  await ui.unmount()
+  ui = await show({ kind: 'step', title: 'T', actions: [{ id: 'practice', label: 'Practice this', key: 'p' }, { id: 'frame-prev', label: 'Previous frame', key: 'left' }] } as Screen)
+  expect(await hotkeyOf('Practice this')).toBe('p')
+  expect(await hotkeyOf('Previous frame')).toBeUndefined()
   await ui.unmount()
 })
 

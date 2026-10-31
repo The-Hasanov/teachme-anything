@@ -44,6 +44,8 @@ assert.match(h, /class="lesson now">.*Borrowing.*5 of 6 steps/s);
 assert.match(h, /class="lesson writing">.*Being written…/s);
 assert.match(h, /class="lesson failed">.*Could not be written/s);
 assert.match(h, /data-w="33"/, 'a phase bar is its share of lessons done');
+assert.match(send({ data: { ...data, phases: [{ ...data.phases[1], progress: 1.5 }] }, screen, up: true }), /data-key="phase-0" data-w="50"/, 'the current phase bar counts the lesson under way');
+h = send({ data, screen, up: true });
 assert.match(h, /data-reset="basics"/);
 assert.match(h, /data-reset="own"/);
 assert.ok(!/data-reset="structs"/.test(h), 'a phase not started has nothing to reset');
@@ -75,6 +77,9 @@ assert.deepStrictEqual(posted, [
 
 h = send({ data, screen, up: false });
 assert.match(h, /Not connected/);
+assert.match(send({ data, screen, up: true }), /class="card status up flash"/, 'the dot glows once when the session connects');
+assert.match(send({ data, screen, up: true }), /class="card status up"/, 'and not again on the next redraw');
+h = send({ data, screen, up: false });
 assert.match(h, /data-press="check" disabled/, 'nothing is sent while no session listens');
 assert.match(h, /data-press="tutor" disabled/);
 assert.match(h, /data-lesson>/, 'the lesson view opens without a session');

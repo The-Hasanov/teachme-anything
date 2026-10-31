@@ -76,7 +76,7 @@
   const OUT_WARN = /^(warning[:[]|Warning\b|WARN\b|hint:)/i;
   const output = (s) => String(s).split('\n').map(l => OUT_ERR.test(l) ? `<span class="t-err">${esc(l)}</span>` : OUT_WARN.test(l) ? `<span class="t-warn">${esc(l)}</span>` : esc(l)).join('\n');
   const icon = (name, label) => `<span class="codicon codicon-${name}" ${label ? `aria-label="${esc(label)}" role="img"` : 'aria-hidden="true"'}></span>`;
-  const MARK = { ok: ['pass', 'done'], todo: ['circle-large-outline', 'to do'], fail: ['warning', 'needs attention'], run: ['loading', 'running'], now: ['circle-large-filled', 'current'] };
+  const MARK = { ok: ['pass', 'done'], todo: ['circle-large-outline', 'to do'], fail: ['warning', 'needs attention'], run: ['loading', 'running'], now: ['circle-large-filled', 'current'], half: ['color-mode', 'learning'] };
   const KEY = { enter: 'Enter', h: 'H', a: 'A', b: 'B', g: 'G', p: 'P', u: 'U', s: 'S', d: 'D', e: 'E', c: 'C', left: '←' };
   const TONE_ICON = { right: 'pass', wrong: 'warning', wait: 'loading', info: 'info' };
   const kbd = (a) => a.key && KEY[a.key] ? `<span class="kbd">${KEY[a.key]}</span>` : '';
@@ -144,7 +144,7 @@
     if (s.actions.length) out.push(`<div class="actions">${primary.map(a => `<button class="btn" data-action="${esc(a.id)}">${esc(a.label)}${kbd(a)}</button>`).join('')}${quiet.map(a => `<button class="link" data-action="${esc(a.id)}" ${a.key && KEY[a.key] ? `aria-keyshortcuts="${KEY[a.key]}"` : ''}>${esc(a.label)}${kbd(a)}</button>`).join('')}</div>`);
     if (s.more) out.push(`<details class="more"><summary>More</summary>${md(s.more)}</details>`);
     const keys = [...(s.choices && !s.choices.some(c => c.mark || c.used) ? ['1–8 choose'] : []), ...s.actions.filter(a => KEY[a.key]).map(a => `${KEY[a.key]} ${a.label}`), ...(s.more ? ['M more'] : [])];
-    if (keys.length) out.push(`<p class="keys">${showKeys ? `${esc(keys.join(' · '))} · ? hide` : '? keys'}</p>`);
+    if (showKeys && keys.length) out.push(`<p class="keys">${esc(keys.join(' · '))} · ? hide</p>`);
     const y = window.scrollY;
     root.innerHTML = `<main class="k-${esc(s.kind)}${isNew ? ' enter' : ''}">${out.join('')}</main>`;
     window.scrollTo(0, isNew ? 0 : y);
