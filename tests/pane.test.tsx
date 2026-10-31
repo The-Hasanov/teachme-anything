@@ -617,6 +617,55 @@ test('#14 Ask sends the step to the agent, and its explanation shows under the s
   await ui.unmount()
 })
 
+// #lost-exam: a learner's answers vanished when they asked in the chat, and after a restart in the check before the next lesson
+const TO_TRACE = ['choose-1', 'choose-1', 'choose-1', 'act-continue', 'act-start', 'act-next', 'act-frame-next', 'act-frame-next', 'act-next', 'choose-1', 'act-next']
+const keys = async (ui: Awaited<ReturnType<Parameters<Parameters<typeof test>[1]>[0]['ui']['mount']>>) => (await ui.findAll({ type: 'Button' })).map(b => (b as unknown as { key: string }).key)
+const shown = async (ui: Awaited<ReturnType<Parameters<Parameters<typeof test>[1]>[0]['ui']['mount']>>) => [...await ui.findAll({ type: 'Text' }), ...await ui.findAll({ type: 'Markdown' })].map(t => t.text).join(' | ')
+
+test('#lost-exam a question in the chat keeps the half-filled answer on screen, still answerable', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  on('prompt.submit', (_, e) => ({ text: e.text ?? '' }))
+  agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await seed($, w.files, bigo)
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  for (const key of [...TO_TRACE, 'choose-1']) await ui.press({ key })
+  await $.prompt.submit({ text: 'why does the inner loop count?' } as never)
+  expect(await shown(ui)).toMatch(/Trace a loop in a loop[\s\S]*2\s+▸\?[\s\S]*Ask in the chat/)
+  expect(await keys(ui)).toEqual(expect.arrayContaining(['choose-3', 'act-undo', 'act-back']))
+  for (const key of ['choose-3', 'choose-6', 'choose-8']) await ui.press({ key })
+  expect(await shown(ui)).toMatch(/Right, all of it\./)
+  expect(await shown(ui)).not.toMatch(/Ask in the chat/)
+  await ui.unmount()
+})
+
+test('#lost-exam a restart in the check before the next lesson resumes it, answer kept, then goes on', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await seed($, w.files, bigo)
+  let ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  for (const key of [...TO_TRACE, 'choose-2', 'choose-3', 'choose-6', 'choose-8']) await ui.press({ key })
+  // A learner who answers what is shown, wrong where there is a choice, until the check before the next lesson
+  for (let i = 0; i < 30 && !/Before you move on/.test(await shown(ui)); i++) {
+    const k = await keys(ui)
+    await ui.press({ key: k.includes('act-next') ? 'act-next' : k.find(x => x.startsWith('choose-'))! })
+  }
+  expect(await shown(ui)).toMatch(/Before you move on · 1 of 1/)
+  await ui.press({ key: 'choose-2' })
+  const check = await shown(ui)
+  await ui.unmount()
+
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  expect(await shown(ui)).toMatch(/You stopped at: \*\*Before you move on\*\* · 1 of 1/)
+  await ui.press({ key: 'act-continue' })
+  expect(await shown(ui)).toBe(check)
+  await ui.press({ key: 'act-next' })
+  expect(await shown(ui)).toMatch(/Today/)
+  await ui.unmount()
+})
+
 test('#13 the author of the next lesson, asked for by a press, starts from a relay\'s end, so its submit_segment is answered', async ($, on) => {
   // In Claude Code an agent spawned outside a hook runs under the plugin's own origin, and the engine then skips the
   // plugin's tool.call hooks for that agent's calls. The kit does not model origins, so this holds the plugin to the

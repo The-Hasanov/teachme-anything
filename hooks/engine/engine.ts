@@ -346,6 +346,8 @@ export function press(c: Ctx, p: Press): Out {
   const s = c.state
   const action = 'action' in p ? p.action : undefined
   if (c.welcome && action === 'continue') {
+    // A check left open goes on as it was: a new warm-up would drop its answers and its place before the next lesson
+    if (current(c)?.warm) return NONE
     const items = dueItems(c)
     return items.length ? { events: [{ ts: c.now, type: 'warm', items }], effects: [] } : NONE
   }
@@ -410,7 +412,11 @@ export function press(c: Ctx, p: Press): Out {
   if (s.aside && 'text' in p) return p.text.trim() ? { events: [], effects: [{ kind: 'ask', question: p.text.trim().slice(0, 300) }] } : NONE
   if (action === 'curriculum') return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
   if (action === 'dontknow' && step.choices && !s.result[step.id] && s.idk[step.id] === undefined) return { events: [{ ts: c.now, type: 'dontknow', step: step.id, ...(step.skill ? { skill: step.skill } : {}) }], effects: [] }
-  if ('choose' in p) return answer(c, at, p.choose)
+  if ('choose' in p) {
+    // An answer given while the explanation is open closes it: the learner is back on the step
+    const out = answer(c, at, p.choose)
+    return s.aside && out.events.length ? { events: [{ ts: c.now, type: 'aside', on: false }, ...out.events], effects: out.effects } : out
+  }
   const draft = s.draft[step.id] ?? []
   if ((action === 'undo' || action === 'clear') && draft.length && !s.result[step.id]) return { events: [{ ts: c.now, type: 'pick', step: step.id, picked: action === 'undo' ? draft.slice(0, -1) : [] }], effects: [] }
   const frame = s.frame[step.id] ?? 0
@@ -532,9 +538,11 @@ export function screen(c: Ctx): Screen {
     const due = dueItems(c).length
     const st = stats(course, s, c.now)
     const sofar = st.answers ? `\n\nSo far: ${pct(st.accuracy)} right over ${st.answers} answers${st.streak > 1 ? `, ${st.streak} days in a row` : ''}.` : ''
+    const w = at.warm && s.warm
+    const place = w ? `**${w.gate ? 'Before you move on' : 'Warm-up'}** · ${w.i + 1} of ${w.items.length}` : `**${at.seg.title}** · step ${stepNumber(at.seg, at.index)}`
     return {
       kind: 'welcome', title: course.subject, progress: overall(c),
-      body: `Welcome back.\n\nYou stopped at: **${at.seg.title}** · step ${stepNumber(at.seg, at.index)}.${sofar}${due ? `\n\nFirst, ${due === 1 ? 'one thing' : `${due} things`} to keep sharp.` : ''}`,
+      body: `Welcome back.\n\nYou stopped at: ${place}.${sofar}${due && !w ? `\n\nFirst, ${due === 1 ? 'one thing' : `${due} things`} to keep sharp.` : ''}`,
       actions: [act('continue', 'Continue', true, 'enter'), act('curriculum', 'Path'), PROGRESS],
     }
   }
@@ -624,60 +632,62 @@ export function screen(c: Ctx): Screen {
     ...(level && step.hints ? { hint: { level, text: step.hints[level - 1]! } } : {}),
   }
   const ask = act('ask', 'Ask', false, 'a')
-  if (s.aside) {
-    const asked = c.asked
-    return {
-      kind: 'step', ...base,
-      result: asked?.answer ? { tone: 'info', text: asked.answer }
-        : asked ? { tone: 'wait', text: asked.question ? `Answering "${asked.question}"…` : 'Explaining this step…' }
-        : { tone: 'info', text: 'Ask in the chat. Your place here is kept.' },
-      input: { placeholder: 'Ask your own question about this step' },
-      actions: [act('back', 'Back to step', true, 'b')],
+  const sc = ((): Screen => {
+    if (step.choices) {
+      const draft = s.draft[step.id] ?? []
+      const edit = !res && draft.length ? [act('undo', 'Undo', false, 'u'), act('clear', 'Start over')] : []
+      const unsure = s.idk[step.id] !== undefined
+      const result = res ? { tone: res.tone, text: res.text } : unsure ? { tone: 'info' as const, text: teaching(at) } : undefined
+      return {
+        kind: 'question', ...base, ...answerParts(step, res, draft),
+        ...(result ? { result } : {}),
+        actions: res
+          ? [act('next', res.branch ? 'Practice this' : 'Next', true, 'enter'), ask, EXPLORE]
+          : [...edit, unsure ? act('next', 'Move on for now', false, 's') : act('dontknow', "I don't know", false, 'd'), ask, EXPLORE],
+      }
     }
-  }
-  if (step.choices) {
-    const draft = s.draft[step.id] ?? []
-    const edit = !res && draft.length ? [act('undo', 'Undo', false, 'u'), act('clear', 'Start over')] : []
-    const unsure = s.idk[step.id] !== undefined
-    const result = res ? { tone: res.tone, text: res.text } : unsure ? { tone: 'info' as const, text: teaching(at) } : undefined
-    return {
-      kind: 'question', ...base, ...answerParts(step, res, draft),
-      ...(result ? { result } : {}),
-      actions: res
-        ? [act('next', res.branch ? 'Practice this' : 'Next', true, 'enter'), ask, EXPLORE]
-        : [...edit, unsure ? act('next', 'Move on for now', false, 's') : act('dontknow', "I don't know", false, 'd'), ask, EXPLORE],
+    if (step.check) {
+      const solved = !!s.solved[step.id]
+      const canHint = !!step.hints && !!s.tries[step.id] && level < step.hints.length && !solved
+      const result = c.busy ? { tone: 'wait' as const, text: c.busy } : res ? { tone: res.tone, text: res.text } : undefined
+      const actions = solved
+        ? [act('next', 'Next', true, 'enter')]
+        : [
+          act('check', res ? 'Check again' : 'Check', true, 'enter'),
+          ...(res?.branch ? [act('next', 'Practice this', false, 'p')] : []),
+          ...(canHint ? [act('hint', `Hint ${level + 1}`, false, 'h')] : []),
+          ...(canSkip(c, step) ? [act('skip', 'Move on for now', false, 's')] : []),
+          ask, EXPLORE,
+        ]
+      const where = seg.practice ? { where: { dir: seg.practice.dir, ...(step.open ? { file: step.open } : {}) } } : {}
+      return { kind: 'exercise', ...base, ...where, ...(result ? { result } : {}), actions }
     }
-  }
-  if (step.check) {
-    const solved = !!s.solved[step.id]
-    const canHint = !!step.hints && !!s.tries[step.id] && level < step.hints.length && !solved
-    const result = c.busy ? { tone: 'wait' as const, text: c.busy } : res ? { tone: res.tone, text: res.text } : undefined
-    const actions = solved
-      ? [act('next', 'Next', true, 'enter')]
-      : [
-        act('check', res ? 'Check again' : 'Check', true, 'enter'),
-        ...(res?.branch ? [act('next', 'Practice this', false, 'p')] : []),
-        ...(canHint ? [act('hint', `Hint ${level + 1}`, false, 'h')] : []),
-        ...(canSkip(c, step) ? [act('skip', 'Move on for now', false, 's')] : []),
-        ask, EXPLORE,
-      ]
-    const where = seg.practice ? { where: { dir: seg.practice.dir, ...(step.open ? { file: step.open } : {}) } } : {}
-    return { kind: 'exercise', ...base, ...where, ...(result ? { result } : {}), actions }
-  }
-  if (step.frames) {
-    const i = s.frame[step.id] ?? 0
-    const f = step.frames[i]!
-    const last = i === step.frames.length - 1
-    return {
-      kind: 'step', ...base, frame: { i, n: step.frames.length, note: f.note, ...(f.code ? { code: f.code } : {}), ...(f.state ? { state: f.state } : {}) },
-      actions: [
-        ...(last ? [act('next', 'Next', true, 'enter')] : [act('frame-next', 'Next frame', true, 'enter')]),
-        ...(i > 0 ? [act('frame-prev', 'Previous frame', false, 'left')] : []),
-        ...(last ? [] : [act('next', 'Skip ahead', false, 's')]), ask, EXPLORE,
-      ],
+    if (step.frames) {
+      const i = s.frame[step.id] ?? 0
+      const f = step.frames[i]!
+      const last = i === step.frames.length - 1
+      return {
+        kind: 'step', ...base, frame: { i, n: step.frames.length, note: f.note, ...(f.code ? { code: f.code } : {}), ...(f.state ? { state: f.state } : {}) },
+        actions: [
+          ...(last ? [act('next', 'Next', true, 'enter')] : [act('frame-next', 'Next frame', true, 'enter')]),
+          ...(i > 0 ? [act('frame-prev', 'Previous frame', false, 'left')] : []),
+          ...(last ? [] : [act('next', 'Skip ahead', false, 's')]), ask, EXPLORE,
+        ],
+      }
     }
+    return { kind: 'step', ...base, actions: [act('next', 'Next', true, 'enter'), ask, EXPLORE] }
+  })()
+  if (!s.aside) return sc
+  // Ask opens under the step: the step stays as it was, its answers still clickable; answering closes it
+  const asked = c.asked
+  return {
+    ...sc,
+    result: asked?.answer ? { tone: 'info', text: asked.answer }
+      : asked ? { tone: 'wait', text: asked.question ? `Answering "${asked.question}"…` : 'Explaining this step…' }
+      : { tone: 'info', text: 'Ask in the chat. Your place here is kept.' },
+    input: { placeholder: 'Ask your own question about this step' },
+    actions: [act('back', 'Hide the explanation', false, 'b'), ...sc.actions.filter(a => a.id !== 'ask')],
   }
-  return { kind: 'step', ...base, actions: [act('next', 'Next', true, 'enter'), ask, EXPLORE] }
 }
 
 // What "I don't know" shows: the step's own explanation, or the earlier step that teaches its skill

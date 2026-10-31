@@ -100,6 +100,64 @@ test('a step the schema accepts can always be left, whatever parts the author le
   expect(stuck).toEqual([])
 })
 
+// What a learner has put into a step: leaving it and coming back must give all of it back
+const kept = (c: Ctx, id: string) => JSON.stringify([current(c)?.step.id, ...(['result', 'draft', 'frame', 'hints', 'solved', 'idk'] as const).map(k => c.state[k][id])])
+
+// Half way through a step: one cell of a sequence, a wrong answer, a later frame, a failed check
+function midway(l: ReturnType<typeof at>, step: Step) {
+  if (step.choices && step.key && (step.kind === 'reorder' || step.kind === 'trace')) l.go({ choose: step.key[0]! + 1 })
+  else if (step.choices && step.key) l.go({ choose: step.choices.findIndex((_, i) => !step.key!.includes(i)) + 1 || 1 })
+  if (step.frames) l.go({ action: 'frame-next' })
+  if (step.check) l.take(checked(l.c, step.id, step.check.probes.map(p => ({ id: p.id, ok: false, got: '' }))))
+}
+
+// The ways out of a step that must lead back to it: Ask, the Path, and a new session's welcome
+const ROUND_TRIPS: Record<string, (l: ReturnType<typeof at>) => void> = {
+  'Ask, then back': l => { l.go({ action: 'ask' }); l.go({ action: 'back' }) },
+  'Path, then Continue': l => { l.go({ action: 'curriculum' }); l.go({ action: 'start' }) },
+  'a new session, then Continue': l => {
+    l.c.welcome = true
+    l.go({ action: 'continue' })
+    l.c.welcome = false
+    for (let i = 0; i < 10 && current(l.c)?.warm; i++) l.go({ action: 'skip' })
+  },
+}
+
+test('no way out of a step loses what the learner put into it (#lost-exam)', () => {
+  const lost: string[] = []
+  everyStep((lib, seg, i, step) => {
+    if (step.drill) return
+    for (const [name, trip] of Object.entries(ROUND_TRIPS)) {
+      const l = at(lib.course, lib.segments, seg, i)
+      midway(l, step)
+      const before = kept(l.c, step.id)
+      trip(l)
+      if (kept(l.c, step.id) !== before) lost.push(`${seg.id}/${step.id} after ${name}: ${before} → ${kept(l.c, step.id)}`)
+    }
+  })
+  expect(lost).toEqual([])
+})
+
+test('a new session resumes the check before the next lesson as it was left, answers kept (#lost-exam)', () => {
+  const seg = bigo.bigo1
+  const trace = seg.steps.findIndex(x => x.kind === 'trace')
+  const l = at(bigo.course, bigo.segments, seg, trace)
+  const step = seg.steps[trace]!
+  for (const k of step.key!) l.go({ choose: k === step.key![0] ? ((k + 1) % step.choices!.length) + 1 : k + 1 })
+  const last = seg.steps.findLastIndex(x => !x.drill)
+  l.take({ events: [{ ts: l.c.now, type: 'enter', seg: seg.id, step: last }], effects: [] })
+  l.c.state = { ...l.c.state, solved: { ...l.c.state.solved, [seg.steps[last]!.id]: true }, result: { ...l.c.state.result, [seg.steps[last]!.id]: { tone: 'right', text: '' } } }
+  l.go({ action: 'next' })
+  expect(screen(l.c).progress?.label).toMatch(/^Before you move on · 1 of/)
+  l.go({ choose: 1 })
+  const check = JSON.stringify([l.c.state.warm, screen(l.c).progress, screen(l.c).choices, screen(l.c).result, screen(l.c).actions])
+  l.c.welcome = true
+  expect(screen(l.c).body).toMatch(/You stopped at: \*\*Before you move on\*\* · 1 of/)
+  l.go({ action: 'continue' })
+  l.c.welcome = false
+  expect(JSON.stringify([l.c.state.warm, screen(l.c).progress, screen(l.c).choices, screen(l.c).result, screen(l.c).actions])).toBe(check)
+})
+
 test('the host handles every effect the engine asks for (#14)', () => {
   const asked = new Set<string>()
   everyStep((lib, seg, i, step) => {
