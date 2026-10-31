@@ -3,7 +3,7 @@ import { atom, read, update } from 'claude-code'
 import * as example from './host/example'
 import type { AgentSpawnArgs, AgentSpawnResult, EngineInterface, Register } from 'claude-code'
 
-import { checked, current, dashboard, exploreTopics, level, press, screen, setupDone, snapshot, taught, withProject } from './engine/engine'
+import { checked, current, dashboard, exploreTopics, level, press, screen, setupDone, snapshot, taught, withProject, lookBack } from './engine/engine'
 import type { Ctx, Out } from './engine/engine'
 import { replay } from './engine/engine'
 import type { Build, Course, Effect, Explore, LogEvent, Line, Phase, Press, ProjectPick, Reading, Requirement, Screen, Segment } from './engine/types'
@@ -53,6 +53,10 @@ type Session = {
   env?: Env
   welcome: boolean
   progress?: boolean
+  // An earlier step shown read-only (Previous, or a finished lesson opened from the path); the log never changes for it
+  peek?: { seg: string; step: number }
+  // The section each reading was left at, so it reopens there
+  lastSection?: Record<string, number>
   busy?: string
   preparing?: string
   prepAgent?: string
@@ -84,7 +88,7 @@ async function deviceOf($: EngineInterface) {
 
 async function ctx($: EngineInterface): Promise<Ctx> {
   const s = sess!
-  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, preparing: !!s.preparing, prepSince: s.preparing ? s.prepSince : undefined, prepError: s.prepError, build: s.build?.open ? s.build : undefined, explore: s.explore, asked: askedHere(s) }
+  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, peek: s.peek, preparing: !!s.preparing, prepSince: s.preparing ? s.prepSince : undefined, prepError: s.prepError, build: s.build?.open ? s.build : undefined, explore: s.explore, asked: askedHere(s) }
 }
 
 const askedHere = (s: Session) => {
@@ -158,6 +162,13 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
   if ('action' in p && p.action === 'progress') { s.progress = true; return refresh($) }
   if ('action' in p && p.action === 'back') s.asking = undefined
   if (s.progress) { if ('action' in p && p.action === 'back') { s.progress = false; await refresh($) } return }
+  if (s.peek) {
+    const action = 'action' in p ? p.action : undefined
+    if (action === 'back') { s.peek = undefined; return refresh($) }
+    const i = action === 'prev' || action === 'peek-next' ? lookBack(await ctx($), s.peek.seg, s.peek.step, action === 'prev' ? -1 : 1) : undefined
+    if (i !== undefined) { s.peek = { ...s.peek, step: i }; await refresh($) }
+    if (!action?.startsWith('open:')) return
+  }
   if (s.welcome && 'action' in p && (p.action === 'continue' || p.action === 'curriculum')) {
     const out = press(await ctx($), p)
     s.welcome = false
@@ -176,7 +187,7 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
 }
 
 // The effects run() handles. tests/invariants checks that the engine asks for no other; run() throws on one it can't do.
-export const HANDLED_EFFECTS: readonly Effect['kind'][] = ['check', 'escalate', 'setup', 'heal', 'practice', 'prepare', 'remedy', 'ask', 'restart', 'explore']
+export const HANDLED_EFFECTS: readonly Effect['kind'][] = ['check', 'escalate', 'setup', 'heal', 'practice', 'prepare', 'remedy', 'ask', 'restart', 'explore', 'peek']
 
 async function run($: EngineInterface, fx: Effect) {
   const s = sess!
@@ -212,6 +223,7 @@ async function run($: EngineInterface, fx: Effect) {
     if (fx.kind === 'ask') return ask($, fx.question)
     if (fx.kind === 'restart') return restartPractice($, fx.segs, fx.fresh)
     if (fx.kind === 'explore') return void await openExplore($, fx.topic)
+    if (fx.kind === 'peek') { s.peek = { seg: fx.seg, step: fx.step }; return void await refresh($) }
     throw new Error('no handler for this effect')
   } catch (err) {
     s.busy = undefined
@@ -577,6 +589,7 @@ async function openExplore($: EngineInterface, topic?: string) {
 async function showSection($: EngineInterface, r: Reading, section: number) {
   const s = sess!
   s.explore = { ...s.explore!, reading: r, section, contents: false, writing: undefined, note: undefined }
+  s.lastSection = { ...s.lastSection, [r.id]: section }
   await commit($, { events: [{ ts: await $.clock.now(), type: 'read', reading: r.id, section }], effects: [] })
 }
 
@@ -590,7 +603,7 @@ async function showTopic($: EngineInterface, topic: string, deeper?: { reading: 
   if (found && !deeper) {
     const seen = new Set(s.state.read[found.id] ?? [])
     const next = found.sections.findIndex((_, i) => !seen.has(i))
-    return showSection($, found, next < 0 ? 0 : next)
+    return showSection($, found, s.lastSection?.[found.id] ?? (next < 0 ? 0 : next))
   }
   if (s.writer) {
     s.explore = { ...s.explore!, note: `"${s.writer.topic}" is being written. It opens when it is ready; then ask for the next one.` }
@@ -1053,7 +1066,9 @@ export const registerLesson: Register = on => {
     const markColor = { ok: 'success', todo: undefined, fail: 'warning', run: undefined, now: ACCENT, half: ACCENT } as const
     const line = (l: Line, key: string) => (
       <Box key={key} flexDirection="column">
-        <Text color={markColor[l.mark]} dimColor={l.mark === 'todo' || l.mark === 'run'}>{l.sub ? '  ' : ''}{glyph[l.mark]} {l.text}</Text>
+        {l.action
+          ? <Box flexDirection="row">{l.sub && <Text>  </Text>}<Text color={markColor[l.mark]}>{glyph[l.mark]} </Text><Button key={`line-${l.action}`} plain onPress={go({ action: l.action })}>{l.text}</Button></Box>
+          : <Text color={markColor[l.mark]} dimColor={l.mark === 'todo' || l.mark === 'run'}>{l.sub ? '  ' : ''}{glyph[l.mark]} {l.text}</Text>}
         {l.detail && <Text dimColor>{l.sub ? '    ' : '  '}{l.detail}</Text>}
       </Box>
     )
@@ -1149,9 +1164,9 @@ export const registerLesson: Register = on => {
           <Box key={`choice-${ch.n}`} flexDirection="column">
             {ch.used
               ? <Text dimColor>✓ {ch.n}  {ch.text}</Text>
-              : ch.mark || (sc.result && sc.result.tone !== 'info')
+              : ch.mark || sc.choices!.some(x => x.mark) || (sc.result && sc.result.tone !== 'info')
               ? <Text color={ch.mark === 'right' || ch.mark === 'key' ? 'success' : ch.mark === 'wrong' ? 'warning' : undefined} dimColor={!ch.mark}>{ch.mark === 'right' ? '✓' : ch.mark === 'wrong' ? '✗' : ch.mark === 'key' ? '✓' : ' '} {ch.n}  {ch.text}</Text>
-              : <Button key={`choose-${ch.n}`} hotkey={String(ch.n)} plain onPress={go({ choose: ch.n })}>{ch.done ? `✓ ${ch.text}` : ch.text}</Button>}
+              : <Button key={`choose-${ch.n}`} hotkey={String(ch.n)} plain onPress={go({ choose: ch.n })}>{`${ch.here ? '▸ ' : ''}${ch.done ? '✓ ' : ''}${ch.text}${ch.here ? ' (here)' : ''}`}</Button>}
             {ch.code && ch.code.trim() !== ch.text.trim() && <Box paddingX={2}><Code source={ch.code} wrap="wrap" /></Box>}
             {ch.mark && ch.why && <Text dimColor>    {ch.why}</Text>}
           </Box>

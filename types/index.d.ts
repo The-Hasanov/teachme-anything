@@ -1,4 +1,4 @@
-export type Line = { mark: 'ok' | 'todo' | 'fail' | 'run' | 'now' | 'half'; text: string; detail?: string; sub?: boolean }
+export type Line = { mark: 'ok' | 'todo' | 'fail' | 'run' | 'now' | 'half'; text: string; detail?: string; sub?: boolean; action?: string }
 export type Action = { id: string; label: string; primary?: boolean; key?: string }
 export type Screen = {
   kind: 'empty' | 'welcome' | 'intake' | 'setup' | 'curriculum' | 'step' | 'question' | 'exercise' | 'recap' | 'progress' | 'explore'
@@ -10,7 +10,7 @@ export type Screen = {
   output?: string
   compare?: { with: string; text: string; stops: string }
   input?: { placeholder: string }
-  choices?: { n: number; text: string; code?: string; mark?: 'right' | 'wrong' | 'key'; why?: string; used?: boolean; done?: boolean }[]
+  choices?: { n: number; text: string; code?: string; mark?: 'right' | 'wrong' | 'key'; why?: string; used?: boolean; done?: boolean; here?: boolean }[]
   built?: { text: string; mark?: 'right' | 'wrong' }[]
   table?: { columns: string[]; rows: { cells: string[]; at?: number; mark?: 'right' | 'wrong' }[] }
   frame?: { i: number; n: number; note: string; code?: string; state?: string }

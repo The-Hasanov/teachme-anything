@@ -34,7 +34,7 @@
         <div class="phase-head">${icon(PHASE_ICON[p.mark])}<h2>${esc(p.title)}</h2><span class="count">${p.done} of ${p.total} lesson${p.total === 1 ? '' : 's'}</span>${p.mark === 'todo' ? '' : `<button class="ghost" data-reset="${esc(p.id)}" data-title="${esc(p.title)}" title="Reset ${esc(p.title)}" aria-label="Reset ${esc(p.title)}">${icon('discard')}</button>`}</div>
         ${bar(`phase-${i}`, p.progress ?? p.done, p.total)}
         <ol class="lessons">${p.lessons.map(l => `
-          <li class="lesson ${l.status}"><span class="dot" aria-hidden="true"></span><span class="name">${esc(l.title)}</span><span class="state">${esc(l.steps ?? LESSON_TEXT[l.status])}</span></li>`).join('')}
+          <li class="lesson ${l.status}"><span class="dot" aria-hidden="true"></span>${l.status === 'done' ? `<button class="name link" data-press="open:${esc(l.id)}" title="Look back at this lesson">${esc(l.title)}</button>` : `<span class="name">${esc(l.title)}</span>`}<span class="state">${esc(l.steps ?? LESSON_TEXT[l.status])}</span></li>`).join('')}
         </ol>
       </article>`).join('')}</section>`;
   }

@@ -81,7 +81,7 @@
   const output = (s) => String(s).split('\n').map(l => OUT_ERR.test(l) ? `<span class="t-err">${esc(l)}</span>` : OUT_WARN.test(l) ? `<span class="t-warn">${esc(l)}</span>` : esc(l)).join('\n');
   const icon = (name, label) => `<span class="codicon codicon-${name}" ${label ? `aria-label="${esc(label)}" role="img"` : 'aria-hidden="true"'}></span>`;
   const MARK = { ok: ['pass', 'done'], todo: ['circle-large-outline', 'to do'], fail: ['warning', 'needs attention'], run: ['loading', 'running'], now: ['circle-large-filled', 'current'], half: ['color-mode', 'learning'] };
-  const KEY = { enter: 'Enter', h: 'H', a: 'A', b: 'B', g: 'G', p: 'P', u: 'U', s: 'S', d: 'D', e: 'E', c: 'C', left: '←' };
+  const KEY = { n: 'N', enter: 'Enter', h: 'H', a: 'A', b: 'B', g: 'G', p: 'P', u: 'U', s: 'S', d: 'D', e: 'E', c: 'C', left: '←' };
   const TONE_ICON = { right: 'pass', wrong: 'warning', wait: 'loading', info: 'info' };
   const kbd = (a) => a.key && KEY[a.key] ? `<span class="kbd">${KEY[a.key]}</span>` : '';
   const target = (el) => el?.dataset?.action ? `[data-action="${el.dataset.action}"]` : el?.dataset?.choose ? `[data-choose="${el.dataset.choose}"]` : undefined;
@@ -98,7 +98,7 @@
     vscode.postMessage({ type: 'press', press, t: Date.now() });
   }
 
-  const lines = (ls) => `<ul class="lines">${ls.map(l => `<li${l.sub ? ' class="sub"' : ''}><span class="mark-${l.mark}">${icon(...MARK[l.mark])}</span><span>${esc(l.text)}</span>${l.detail ? `<span class="detail">${esc(l.detail)}</span>` : ''}</li>`).join('')}</ul>`;
+  const lines = (ls) => `<ul class="lines">${ls.map(l => `<li${l.sub ? ' class="sub"' : ''}><span class="mark-${l.mark}">${icon(...MARK[l.mark])}</span>${l.action ? `<button class="link" data-action="${esc(l.action)}">${esc(l.text)}</button>` : `<span>${esc(l.text)}</span>`}${l.detail ? `<span class="detail">${esc(l.detail)}</span>` : ''}</li>`).join('')}</ul>`;
   const chart = (c) => {
     const n = c.points.length, x = (i) => (8 + i * 190 / (n - 1)).toFixed(1), y = (v) => (54 - v * 48).toFixed(1);
     const grid = [0, 0.5, 1].map(v => `<line class="grid" x1="8" x2="198" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="0" y="${(Number(y(v)) + 2).toFixed(1)}">${v * 100}</text>`).join('');
@@ -136,7 +136,7 @@
         const cls = c.mark ?? (answered || c.used ? 'dim' : '');
         if (c.used) return `<button class="choice used" data-choose="${c.n}" disabled aria-label="${c.n}: ${esc(c.text)}, placed"><span class="n">${icon('check')}</span><span>${c.code ? `<code>${esc(c.code)}</code>` : esc(c.text)}</span></button>`;
         const state = c.mark === 'right' ? ', your answer, right' : c.mark === 'wrong' ? ', your answer, not right' : c.mark === 'key' ? ', the right answer' : '';
-        return `<button class="choice ${cls}" data-choose="${c.n}" ${answered ? 'disabled' : ''} aria-label="${c.n}: ${esc(c.text)}${c.done ? ', read' : ''}${state}"><span class="n">${c.mark === 'right' || c.mark === 'key' ? icon('pass') : c.mark === 'wrong' ? icon('close') : c.n}</span>${c.code ? `<pre><code>${hl(c.code, lang)}</code></pre>` : `<span>${esc(c.text)}${c.done ? ` <span class="done">${icon('pass')}</span>` : ''}</span>`}${c.mark && c.why ? `<span class="why">${esc(c.why)}</span>` : ''}</button>`;
+        return `<button class="choice ${cls}" data-choose="${c.n}" ${answered ? 'disabled' : ''} ${c.here ? 'aria-current="true" ' : ''}aria-label="${c.n}: ${esc(c.text)}${c.done ? ', read' : ''}${c.here ? ', open now' : ''}${state}"><span class="n">${c.mark === 'right' || c.mark === 'key' ? icon('pass') : c.mark === 'wrong' ? icon('close') : c.n}</span>${c.code ? `<pre><code>${hl(c.code, lang)}</code></pre>` : `<span>${esc(c.text)}${c.done ? ` <span class="done">${icon('pass')}</span>` : ''}${c.here ? ' <span class="here">here</span>' : ''}</span>`}${c.mark && c.why ? `<span class="why">${esc(c.why)}</span>` : ''}</button>`;
       }).join('')}</div>`);
     }
     if (s.input) out.push(`<form class="other"><input type="text" maxlength="300" aria-label="${esc(s.input.placeholder)}" placeholder="${esc(s.input.placeholder)}"><button class="btn" type="submit">Send</button></form>`);

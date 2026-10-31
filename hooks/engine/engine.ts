@@ -16,6 +16,8 @@ export type Ctx = {
   prepError?: string
   build?: Build
   explore?: Explore
+  // Looking back at an earlier step (Previous, or a finished lesson opened from the path): shown read-only
+  peek?: { seg: string; step: number }
   // Ask on this step: the agent's explanation once its turn ended, until then the question being answered
   asked?: { question?: string; answer?: string }
 }
@@ -389,6 +391,7 @@ export function press(c: Ctx, p: Press): Out {
       return go ? { events: [{ ts: c.now, type: 'stage', stage: 'lesson' }, ...go.events], effects: go.effects } : NONE
     }
     if (action === 'retry' && s.done && ahead(c) === 'missing') return { events: [], effects: [{ kind: 'prepare', after: s.done }] }
+    if (action?.startsWith('open:')) return openLesson(c, action.slice(5))
     if (action === 'curriculum' && s.stage === 'recap') return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
     return NONE
   }
@@ -406,6 +409,12 @@ export function press(c: Ctx, p: Press): Out {
     if (s.warm?.gate && !current(after)?.warm) { const go = advance(after); return { events: [ev, ...go.events], effects: go.effects } }
     return { events: [ev], effects: [] }
   }
+  if (action === 'prev') {
+    const base = here(c)!
+    const i = lookBack(c, base.seg, base.step, -1)
+    return i === undefined ? NONE : { events: [], effects: [{ kind: 'peek', seg: base.seg, step: i }] }
+  }
+  if (action?.startsWith('open:')) return openLesson(c, action.slice(5))
   if (action === 'ask') return { events: [{ ts: c.now, type: 'aside', on: true, step: step.id }], effects: [{ kind: 'ask' }] }
   if (action === 'back') return { events: [{ ts: c.now, type: 'aside', on: false }], effects: [] }
   // A question of their own about the step, typed beside it while stepped aside
@@ -533,6 +542,8 @@ export function screen(c: Ctx): Screen {
   if (!c.course) return { kind: 'empty', title: 'Teach Me', body: 'Say "teach me <subject>" in the chat to start.', actions: [] }
   const course = c.course
   if (c.progress) return progressScreen(c)
+  const peek = c.peek && peekScreen(c, c.peek)
+  if (peek) return peek
   if (c.welcome && s.stage === 'lesson' && current(c)) {
     const at = current(c)!
     const due = dueItems(c).length
@@ -587,8 +598,12 @@ export function screen(c: Ctx): Screen {
             : 'Prepared when you get there',
         }
         // The section under way shows its lessons, as the dashboard does: where you are inside it, and what comes next
-        const lessons = line.mark === 'now' ? dashboard(c)?.phases[i]?.lessons ?? [] : []
-        return [line, ...lessons.map(l => ({ mark: LESSON_MARK[l.status], text: l.title, sub: true, ...(l.steps ?? LESSON_NOTE[l.status] ? { detail: l.steps ?? LESSON_NOTE[l.status] } : {}) }))]
+        const lessons = line.mark === 'todo' ? [] : dashboard(c)?.phases[i]?.lessons ?? []
+        return [line, ...lessons.map(l => ({
+          mark: LESSON_MARK[l.status], text: l.title, sub: true,
+          ...(l.steps ?? LESSON_NOTE[l.status] ? { detail: l.steps ?? LESSON_NOTE[l.status] } : {}),
+          ...(l.status === 'done' ? { action: `open:${l.id}` } : l.status === 'now' && nextActions(c, '').length ? { action: 'start' } : {}),
+        }))]
       }),
       ...(!segmentOrder(course).some(id => c.segments[id])
         ? { result: { tone: 'wait' as const, text: 'Your first lesson is being written and checked. About a minute.' }, actions: [PROGRESS, EXPLORE] }
@@ -621,7 +636,7 @@ export function screen(c: Ctx): Screen {
       body: step.body, ...(step.code ? { code: { lang: step.code.lang, source: step.code.source } } : {}),
       ...answerParts(step, res, s.draft[rk]),
       ...(res ? { result: { tone: res.tone, text: res.text } } : {}),
-      actions: res ? [act('next', s.warm.i + 1 < n ? 'Next' : gate ? 'Continue' : 'Back to your lesson', true, 'enter')] : [act('skip', gate ? 'Skip this check' : 'Skip the warm-up')],
+      actions: res ? [act('next', s.warm.i + 1 < n ? 'Next' : gate ? 'Continue' : 'Back to your lesson', true, 'enter')] : [act('skip', gate ? 'Skip this check' : 'Skip the warm-up'), EXPLORE],
     }
   }
   const total = seg.steps.filter(x => !x.drill).length
@@ -681,6 +696,13 @@ export function screen(c: Ctx): Screen {
     }
     return { kind: 'step', ...base, actions: [act('next', 'Next', true, 'enter'), ask, EXPLORE] }
   })()
+  // Previous looks back at the step before, read-only; it sits before Ask, or last when the step has no Ask
+  const back = here(c)
+  if (back && lookBack(c, back.seg, back.step, -1) !== undefined) {
+    const prev = act('prev', 'Previous step', false, step.frames ? undefined : 'left')
+    const i = sc.actions.findIndex(a => a.id === 'ask')
+    sc.actions = i < 0 ? [...sc.actions, prev] : [...sc.actions.slice(0, i), prev, ...sc.actions.slice(i)]
+  }
   if (!s.aside) return sc
   // Ask opens under the step: the step stays as it was, its answers still clickable; answering closes it
   const asked = c.asked
@@ -759,6 +781,59 @@ const nextActions = (c: Ctx, label: string): Action[] => {
   return !a || a === 'ready' ? [act('start', label, true, 'enter')] : a === 'missing' ? [act('retry', 'Write it now', true, 'enter')] : []
 }
 
+// The step a lesson stands on: a drill counts as the task it came from
+const here = (c: Ctx) => c.state.pos?.back ?? c.state.pos
+
+// The next step to look back at, before or after `from`: never a drill, and never past where the learner is now
+export function lookBack(c: Ctx, seg: string, from: number, dir: -1 | 1): number | undefined {
+  const g = c.segments[seg]
+  if (!g) return undefined
+  const at = here(c)
+  const end = c.state.stage === 'lesson' && !c.state.done && at?.seg === seg ? at.step : g.steps.length
+  for (let i = from + dir; i >= 0 && i < end; i += dir) if (!g.steps[i]!.drill) return i
+  return undefined
+}
+
+// A finished lesson opens read-only at its first step; the lesson under way is simply continued
+function openLesson(c: Ctx, seg: string): Out {
+  const status = dashboard(c)?.phases.flatMap(p => p.lessons).find(l => l.id === seg)?.status
+  if (status === 'now' && c.state.stage !== 'lesson') return press(c, { action: 'start' })
+  const first = status === 'done' ? c.segments[seg]?.steps.findIndex(x => !x.drill) ?? -1 : -1
+  return first < 0 ? NONE : { events: [], effects: [{ kind: 'peek', seg, step: first }] }
+}
+
+// An earlier step as the learner left it: their answer marked, its explanation, and nothing that can change it
+function peekScreen(c: Ctx, p: { seg: string; step: number }): Screen | undefined {
+  const seg = c.segments[p.seg]
+  const step = seg?.steps[p.step]
+  if (!seg || !step) return undefined
+  const s = c.state
+  const res = s.result[step.id]
+  const total = seg.steps.filter(x => !x.drill).length
+  const n = stepNumber(seg, p.step)
+  const at = s.stage === 'lesson' && !s.done ? current(c) : undefined
+  const fi = step.frames ? Math.min(s.frame[step.id] ?? step.frames.length - 1, step.frames.length - 1) : 0
+  const f = step.frames?.[fi]
+  const prev = lookBack(c, p.seg, p.step, -1), next = lookBack(c, p.seg, p.step, 1)
+  return {
+    kind: step.choices ? 'question' : step.check ? 'exercise' : 'step',
+    title: step.title,
+    progress: { label: `${seg.title} · ${n} of ${total} · looking back`, done: n - 1, total },
+    body: step.body,
+    ...(step.more ? { more: step.more } : {}), ...(step.compare ? { compare: step.compare } : {}),
+    ...(step.code ? { code: { lang: step.code.lang, source: step.code.source } } : {}),
+    ...(step.code?.run ? { output: step.code.run.out } : {}),
+    ...(f ? { frame: { i: fi, n: step.frames!.length, note: f.note, ...(f.code ? { code: f.code } : {}), ...(f.state ? { state: f.state } : {}) } } : {}),
+    ...(step.choices && res ? answerParts(step, res) : {}),
+    ...(res ? { result: { tone: res.tone, text: res.text } } : step.choices || step.check ? { result: { tone: 'info' as const, text: 'Not answered yet.' } } : {}),
+    actions: [
+      act('back', at ? `Back to ${at.step.title}` : backTo(s, 'Back'), true, 'b'),
+      ...(prev !== undefined ? [act('prev', 'Previous step', false, 'left')] : []),
+      ...(next !== undefined ? [act('peek-next', 'Next step', false, 'n')] : []),
+    ],
+  }
+}
+
 const LESSON_MARK = { done: 'ok', now: 'now', ready: 'todo', todo: 'todo', writing: 'run', failed: 'fail' } as const
 const LESSON_NOTE: Partial<Record<keyof typeof LESSON_MARK, string>> = { writing: 'Being written', failed: 'Could not be written' }
 const PROGRESS = act('progress', 'Progress', false, 'g')
@@ -797,7 +872,7 @@ function exploreScreen(x: Explore, s: LearnerState): Screen {
   const seen = new Set(s.read[r.id] ?? [])
   if (x.contents) return {
     kind: 'explore', title, body: `${r.sections.length} sections. Open any of them.`,
-    choices: r.sections.map((sec, i) => ({ n: i + 1, text: sec.title, ...(seen.has(i) ? { done: true } : {}) })),
+    choices: r.sections.map((sec, i) => ({ n: i + 1, text: sec.title, ...(seen.has(i) ? { done: true } : {}), ...(i === x.section ? { here: true } : {}) })),
     actions: [act('read', 'Back to the reading', true, 'b')],
   }
   const i = Math.min(x.section, r.sections.length - 1)
@@ -896,7 +971,7 @@ export function dashboard(c: Ctx): Dashboard | undefined {
     const seg = c.segments[id]
     const st = status(id, order.indexOf(id))
     const steps = st === 'now' && seg && s.pos ? `${stepNumber(seg, s.pos.step)} of ${seg.steps.filter(x => !x.drill).length} steps` : undefined
-    return { title: seg?.title ?? 'Not written yet', status: st, ...(steps ? { steps } : {}) }
+    return { id, title: seg?.title ?? 'Not written yet', status: st, ...(steps ? { steps } : {}) }
   }
   // The lesson under way counts by its steps, so its phase bar and the ring move before a whole lesson is done
   const seg = now ? c.segments[now] : undefined

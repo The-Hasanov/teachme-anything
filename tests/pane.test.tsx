@@ -464,7 +464,7 @@ test('Explore with no course: open a topic, the reading is checked before it is 
   await ui.press({ key: 'act-next' })
   expect(await texts()).toMatch(/Section 2 of 3[\s\S]*Moves[\s\S]*moved/)
   await ui.press({ key: 'act-contents' })
-  expect(await buttons()).toEqual(['✓ One owner', '✓ Moves', 'Drop', 'Back to the reading', 'Open in VS Code'])
+  expect(await buttons()).toEqual(['✓ One owner', '▸ ✓ Moves (here)', 'Drop', 'Back to the reading', 'Open in VS Code'])
   await ui.press({ key: 'choose-3' })
   expect(await texts()).toMatch(/Section 3 of 3[\s\S]*Drop[\s\S]*To explore next: Borrowing · Lifetimes · Smart pointers/)
   expect(await buttons()).toEqual(['Other topics', 'Previous', 'Contents', 'Go deeper', 'Close', 'Open in VS Code'])
@@ -480,6 +480,10 @@ test('Explore with no course: open a topic, the reading is checked before it is 
   expect(toasts).toEqual([expect.stringMatching(/"Rust ownership: Drop" is ready in Explore/)])
   await $.tool.call({ tool: 'mcp__teachme-anything__explore' } as never)
   expect(await buttons()).toEqual(['Rust ownership · 3 of 3 read', 'Rust ownership: Drop · 0 of 3 read', 'Borrowing', 'Lifetimes', 'Smart pointers', 'Close', 'Open in VS Code'])
+  // A reading opened again starts where it was left, not at its first section
+  await ui.press({ key: 'choose-1' })
+  expect(await texts()).toMatch(/Section 3 of 3[\s\S]*Drop/)
+  await ui.press({ key: 'act-home' })
 
   // A reading whose author gives up says so, and the learner can ask again
   await ui.press({ key: 'choose-4' })
@@ -488,7 +492,7 @@ test('Explore with no course: open a topic, the reading is checked before it is 
   expect(await texts()).toMatch(/The reading on "Lifetimes" did not work this time/)
 
   const log = Object.entries(files).find(([f]) => f.includes('/.teachme/log/'))?.[1] ?? ''
-  expect(log.trim().split('\n').map(l => JSON.parse(l)).map(e => `${e.type}:${e.reading}:${e.section}`)).toEqual(['read:rust-ownership:0', 'read:rust-ownership:1', 'read:rust-ownership:2'])
+  expect(log.trim().split('\n').map(l => JSON.parse(l)).map(e => `${e.type}:${e.reading}:${e.section}`)).toEqual(['read:rust-ownership:0', 'read:rust-ownership:1', 'read:rust-ownership:2', 'read:rust-ownership:2'])
   expect(calls.model).toBe(0)
   await ui.unmount()
 })
@@ -671,6 +675,29 @@ test('#lost-exam a restart in the check before the next lesson resumes it, answe
   expect(await shown(ui)).toBe(check)
   await ui.press({ key: 'act-next' })
   expect(await shown(ui)).toMatch(/Today/)
+  await ui.unmount()
+})
+
+test('Previous in the pane: earlier steps read-only, then Back to the half-answered trace, nothing lost', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await seed($, w.files, bigo)
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  for (const key of [...TO_TRACE, 'choose-1']) await ui.press({ key })
+  const before = await shown(ui)
+  await ui.press({ key: 'act-prev' })
+  expect(await shown(ui)).toMatch(/Counting steps · 3 of 8 · looking back[\s\S]*The worst case/)
+  expect(await keys(ui)).toEqual(expect.arrayContaining(['act-back', 'act-prev']))
+  expect(await keys(ui)).not.toContain('act-peek-next')
+  expect((await keys(ui)).filter(k => k.startsWith('choose-'))).toEqual([])
+  await ui.press({ key: 'act-prev' })
+  expect(await shown(ui)).toMatch(/2 of 8 · looking back[\s\S]*Linear search, step by step/)
+  await ui.press({ key: 'act-peek-next' })
+  expect(await shown(ui)).toMatch(/3 of 8 · looking back/)
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toContain('Back to Trace a loop in a loop')
+  await ui.press({ key: 'act-back' })
+  expect(await shown(ui)).toBe(before)
   await ui.unmount()
 })
 

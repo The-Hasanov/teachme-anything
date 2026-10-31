@@ -66,6 +66,8 @@ p { margin: 0; }
 .lesson .state { color: var(--muted); font-size: .88em; }
 .lesson.done .dot { background: var(--right); }
 .lesson.done .name { color: var(--muted); }
+.lesson .name.link { padding: 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+.lesson .name.link:hover { color: var(--fg); text-decoration: underline; }
 .lesson.now { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .lesson.now .dot { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
 .lesson.now .name { font-weight: 600; }

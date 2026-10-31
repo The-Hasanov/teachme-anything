@@ -40,6 +40,8 @@ function registerDashboard(context, layout, channel, showLesson) {
             if (m.type === 'ready') post();
             if (m.type === 'rendered') { rendered = { tab: m.tab, text: m.text }; renders.forEach(fn => fn(rendered)); }
             if (m.type === 'press') channel.push({ type: 'press', press: m.press, t: Date.now() });
+            // A lesson opened from the path shows in the lesson view, brought forward
+            if (m.type === 'press' && m.press?.action?.startsWith('open:')) showLesson().then(undefined, () => undefined);
             if (m.type === 'lesson') showLesson().then(undefined, e => vscode.window.showErrorMessage(`Teach Me: the lesson view cannot open: ${e.message}`));
             if (m.type === 'reset') void confirmReset(m.phase, m.title);
         });

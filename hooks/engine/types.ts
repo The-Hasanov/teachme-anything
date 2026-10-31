@@ -168,7 +168,7 @@ export type Dashboard = {
   title: string
   goal: string
   overall: { label: string; done: number; total: number }
-  phases: { id: string; title: string; mark: 'ok' | 'now' | 'todo'; done: number; progress?: number; total: number; lessons: { title: string; status: LessonStatus; steps?: string }[] }[]
+  phases: { id: string; title: string; mark: 'ok' | 'now' | 'todo'; done: number; progress?: number; total: number; lessons: { id: string; title: string; status: LessonStatus; steps?: string }[] }[]
 }
 
 export type Effect =
@@ -182,6 +182,7 @@ export type Effect =
   | { kind: 'ask'; question?: string }
   | { kind: 'restart'; segs: string[]; fresh?: boolean }
   | { kind: 'explore'; topic?: string }
+  | { kind: 'peek'; seg: string; step: number }
 
 // Explore: a detailed reading on any topic, open whenever the learner wants. Nothing in it is graded.
 export type Section = {

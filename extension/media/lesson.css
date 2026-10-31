@@ -49,6 +49,9 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 ul.lines { list-style: none; margin: var(--tm-s2) 0 var(--tm-s3); padding: 0; }
 ul.lines li { display: grid; grid-template-columns: 20px 1fr; gap: 0 var(--tm-s1); padding: var(--tm-s1) 0; }
 ul.lines li.sub { padding-left: var(--tm-s5); }
+ul.lines .link { text-align: left; }
+.choice .here { margin-left: var(--tm-s1); padding: 0 6px; border-radius: 99px; font-size: .8em; color: var(--tm-accent); border: 1px solid currentColor; }
+.choice[aria-current="true"] { border-color: var(--tm-accent); }
 ul.lines .detail { grid-column: 2; color: var(--tm-muted); font-size: .9em; }
 .mark-ok { color: var(--tm-right); } .mark-fail { color: var(--tm-amber); } .mark-todo, .mark-run { color: var(--tm-muted); } .mark-now { color: var(--tm-focus); } .mark-half { color: var(--tm-accent); }
 .choices { display: flex; flex-direction: column; gap: var(--tm-s2); margin: var(--tm-s3) 0; }

@@ -27,7 +27,7 @@ const data = {
   title: 'Rust <fundamentals>', goal: 'write safe tools', overall: { label: '4 of 9 lessons', done: 4, total: 9 },
   phases: [
     { id: 'basics', title: 'Basics', mark: 'ok', done: 3, total: 3, lessons: [{ title: 'Functions', status: 'done' }] },
-    { id: 'own', title: 'Ownership', mark: 'now', done: 1, total: 3, lessons: [{ title: 'Moves', status: 'done' }, { title: 'Borrowing', status: 'now', steps: '5 of 6 steps' }, { title: 'Not written yet', status: 'writing' }] },
+    { id: 'own', title: 'Ownership', mark: 'now', done: 1, total: 3, lessons: [{ id: 'moves-1', title: 'Moves', status: 'done' }, { title: 'Borrowing', status: 'now', steps: '5 of 6 steps' }, { title: 'Not written yet', status: 'writing' }] },
     { id: 'structs', title: 'Structs, enums and errors', mark: 'todo', done: 0, total: 2, lessons: [{ title: 'Not written yet', status: 'failed' }, { title: 'Not written yet', status: 'todo' }] },
   ],
 };
@@ -42,6 +42,8 @@ assert.equal((h.match(/class="card phase /g) ?? []).length, 3, 'one card per pha
 assert.match(h, /3 of 3 lessons/);
 assert.match(h, /class="lesson now">.*Borrowing.*5 of 6 steps/s);
 assert.match(h, /class="lesson writing">.*Being written…/s);
+assert.match(h, /<button class="name link" data-press="open:moves-1" title="Look back at this lesson">Moves<\/button>/, 'a finished lesson opens in the lesson view');
+assert.ok(!/data-press="open:[^"]*"[^>]*>Borrowing/.test(h), 'the lesson under way is not a link');
 assert.match(h, /class="lesson failed">.*Could not be written/s);
 assert.match(h, /data-w="33"/, 'a phase bar is its share of lessons done');
 assert.match(send({ data: { ...data, phases: [{ ...data.phases[1], progress: 1.5 }] }, screen, up: true }), /data-key="phase-0" data-w="50"/, 'the current phase bar counts the lesson under way');

@@ -113,6 +113,12 @@ assert.match(h, /<button class="link place" data-action="curriculum" title="Open
 assert.match(draw({ kind: 'step', title: 'T', progress: { label: 'Section 1 of 4', done: 1, total: 4 }, actions: [] }), /<div class="progress"><span>Section 1 of 4<\/span>/);
 // Path: the lessons of the section under way sit under it
 assert.match(draw({ kind: 'curriculum', title: 'P', lines: [{ mark: 'now', text: 'Branches' }, { mark: 'ok', text: 'Moves', sub: true }, { mark: 'now', text: 'Borrowing', sub: true, detail: '3 of 8 steps' }], actions: [] }), /<li><span class="mark-now">[\s\S]*<li class="sub"><span class="mark-ok">[\s\S]*<li class="sub"><span class="mark-now">[\s\S]*<span class="detail">3 of 8 steps<\/span>/);
+// A path line with an action is a link; the open section in Explore's contents says so
+assert.match(draw({ kind: 'curriculum', title: 'P', lines: [{ mark: 'ok', text: 'Moves', sub: true, action: 'open:moves-1' }], actions: [] }), /<li class="sub"><span class="mark-ok">[\s\S]*<button class="link" data-action="open:moves-1">Moves<\/button>/);
+h = draw({ kind: 'explore', title: 'R', choices: [{ n: 1, text: 'One', done: true }, { n: 2, text: 'Two', done: true, here: true }], actions: [] });
+assert.match(h, /data-choose="2"\s+aria-current="true" aria-label="2: Two, read, open now"/);
+assert.match(h, /Two <span class="done">[\s\S]*<span class="here">here<\/span>/);
+assert.ok(!/data-choose="1" aria-current/.test(h));
 // Code in a step's text: a fence, or lines that are each one `span`, is a code block, not a pill per line
 h = draw({ kind: 'step', title: 'T', actions: [], body: 'Does it compile?\n\n```rust\nlet s = String::from("hi");\n\nprintln!("<{}>", s);\n```\n\nThen `s` moves.' });
 assert.match(h, /<p>Does it compile\?<\/p><pre class="code"><code>/);
