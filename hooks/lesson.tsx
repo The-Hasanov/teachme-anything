@@ -1053,8 +1053,8 @@ export const registerLesson: Register = on => {
     const markColor = { ok: 'success', todo: undefined, fail: 'warning', run: undefined, now: ACCENT, half: ACCENT } as const
     const line = (l: Line, key: string) => (
       <Box key={key} flexDirection="column">
-        <Text color={markColor[l.mark]} dimColor={l.mark === 'todo' || l.mark === 'run'}>{glyph[l.mark]} {l.text}</Text>
-        {l.detail && <Text dimColor>  {l.detail}</Text>}
+        <Text color={markColor[l.mark]} dimColor={l.mark === 'todo' || l.mark === 'run'}>{l.sub ? '  ' : ''}{glyph[l.mark]} {l.text}</Text>
+        {l.detail && <Text dimColor>{l.sub ? '    ' : '  '}{l.detail}</Text>}
       </Box>
     )
     const filled = sc.progress ? Math.round(BAR_CELLS * sc.progress.done / Math.max(1, sc.progress.total)) : 0
@@ -1062,7 +1062,9 @@ export const registerLesson: Register = on => {
       <Box flexDirection="column" gap="sm">
         {sc.progress && (
           <Box flexDirection="row" columnGap={1}>
-            <Text dimColor>{sc.progress.label}</Text>
+            {sc.progress.action
+              ? <Button key={`act-${sc.progress.action}`} plain onPress={go({ action: sc.progress.action })}>{sc.progress.label}</Button>
+              : <Text dimColor>{sc.progress.label}</Text>}
             <Text><Text color={ACCENT}>{'━'.repeat(filled)}</Text><Text dimColor>{'─'.repeat(BAR_CELLS - filled)}</Text></Text>
           </Box>
         )}

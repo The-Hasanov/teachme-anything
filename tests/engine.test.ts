@@ -364,6 +364,21 @@ test('#18 a lesson whose segment is missing says why and offers Write it now, wh
   expect(press(l.c, { action: 'retry' }).effects).toEqual([])
 })
 
+test('Path lists the lessons of the section under way, the current one with its step, and Continue returns to it', () => {
+  const l = learner()
+  l.toLesson()
+  l.go({ action: 'next' })
+  const at = l.step()
+  l.go({ action: 'curriculum' })
+  const lines = screen(l.c).lines!
+  const phase = git.course.phases.find(p => p.segments.includes('branches-1'))!
+  expect(lines.filter(x => !x.sub)).toHaveLength(git.course.phases.length)
+  expect(lines.filter(x => x.sub)).toHaveLength(phase.segments.length)
+  expect(lines.find(x => x.sub && x.mark === 'now')).toMatchObject({ text: git.branches1.title, detail: `2 of ${git.branches1.steps.filter(x => !x.drill).length} steps` })
+  l.go({ action: 'start' })
+  expect(l.step()).toBe(at)
+})
+
 test('the dashboard path: lessons done, the current one with its step, the next one being written or failed', () => {
   const l = learner()
   l.toLesson()

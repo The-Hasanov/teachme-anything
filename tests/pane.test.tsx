@@ -412,6 +412,7 @@ test('a whole Big-O lesson and a Python code task in the terminal pane, buttons 
   expect(shown).toEqual(expect.arrayContaining(['100 ┤', '  0 ┤']))
   expect(shown.filter(t => /^[ ▁▂▃▄▅▆▇█]+$/.test(t) && /█/.test(t)).length).toBeGreaterThan(1)
   expect(shown).toEqual(expect.arrayContaining(['Strengths', 'To work on', 'Skills']))
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toContain('Back to Today')
   await press(ui, 'act-back')
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text)).toContain('Today')
   const tool = await $.tool.call({ tool: 'mcp__teachme-anything__progress' } as never)
@@ -519,6 +520,7 @@ test('Explore from a lesson opens on the step\'s skill, and Close returns to the
   await ui.press({ key: 'act-explore' })
   await relay()
   expect(prompts()).toEqual([expect.stringMatching(/reading on "Lists, indexes and slices"[\s\S]*Pitch it to this learner/)])
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toContain('Back to the lesson')
   await ui.press({ key: 'act-back' })
   expect(await title()).toMatch(/A list, by position/)
   await ui.unmount()
@@ -619,8 +621,9 @@ test('#14 Ask sends the step to the agent, and its explanation shows under the s
 
 // #lost-exam: a learner's answers vanished when they asked in the chat, and after a restart in the check before the next lesson
 const TO_TRACE = ['choose-1', 'choose-1', 'choose-1', 'act-continue', 'act-start', 'act-next', 'act-frame-next', 'act-frame-next', 'act-next', 'choose-1', 'act-next']
-const keys = async (ui: Awaited<ReturnType<Parameters<Parameters<typeof test>[1]>[0]['ui']['mount']>>) => (await ui.findAll({ type: 'Button' })).map(b => (b as unknown as { key: string }).key)
-const shown = async (ui: Awaited<ReturnType<Parameters<Parameters<typeof test>[1]>[0]['ui']['mount']>>) => [...await ui.findAll({ type: 'Text' }), ...await ui.findAll({ type: 'Markdown' })].map(t => t.text).join(' | ')
+type Drawn = { findAll(q: { type: 'Text' | 'Markdown' | 'Button' }): Promise<readonly { text?: string }[]> }
+const keys = async (ui: Drawn) => (await ui.findAll({ type: 'Button' })).map(b => (b as unknown as { key: string }).key)
+const shown = async (ui: Drawn) => [...await ui.findAll({ type: 'Text' }), ...await ui.findAll({ type: 'Markdown' })].map(t => t.text).join(' | ')
 
 test('#lost-exam a question in the chat keeps the half-filled answer on screen, still answerable', async ($, on) => {
   const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
@@ -636,6 +639,11 @@ test('#lost-exam a question in the chat keeps the half-filled answer on screen, 
   for (const key of ['choose-3', 'choose-6', 'choose-8']) await ui.press({ key })
   expect(await shown(ui)).toMatch(/Right, all of it\./)
   expect(await shown(ui)).not.toMatch(/Ask in the chat/)
+  // The place line opens the path; Continue there comes back to the same answered step
+  await ui.press({ key: 'act-curriculum' })
+  expect(await shown(ui)).toMatch(/Your path to:/)
+  await ui.press({ key: 'act-start' })
+  expect(await shown(ui)).toMatch(/Trace a loop in a loop[\s\S]*Right, all of it\./)
   await ui.unmount()
 })
 

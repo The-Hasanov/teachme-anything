@@ -1,7 +1,7 @@
 import { RETENTION, dueAt, ratingOf, retrievability, review } from './fsrs'
 import { classify, skillState } from './mastery'
 import { WINDOW, pct, stats } from './stats'
-import type { Action, Build, Course, Explore, Dashboard, Effect, LearnerState, LessonStatus, LogEvent, MistakeClass, Phase, Press, Screen, Segment, Step, WarmItem, Weakness } from './types'
+import type { Action, Build, Line, Course, Explore, Dashboard, Effect, LearnerState, LessonStatus, LogEvent, MistakeClass, Phase, Press, Screen, Segment, Step, WarmItem, Weakness } from './types'
 
 export type Ctx = {
   state: LearnerState
@@ -576,16 +576,19 @@ export function screen(c: Ctx): Screen {
     const sharp = keepSharp(c)
     return {
       kind: 'curriculum', title: `Your path to: ${course.goal}`, progress: overall(c),
-      lines: course.phases.map((p, i) => {
+      lines: course.phases.flatMap((p, i) => {
         const practiced = p.skills.filter(id => ['practiced', 'demonstrated', 'mastered'].includes(skillState(s, id, c.now))).length
         const toSharpen = sharp.filter(w => w.skill && p.skills.includes(w.skill)).length
-        return {
+        const line: Line = {
           mark: phaseDone(c, p.skills) ? 'ok' as const : (s.pos ? course.phases.findIndex(x => x.segments.includes(s.pos!.seg)) === i : i === 0) ? 'now' as const : 'todo' as const,
           text: p.title,
           detail: p.project ? `Project · ${p.segments.length} milestones` : p.skills.length
             ? [`${practiced} of ${p.skills.length} skills`, toSharpen ? `${toSharpen} to keep sharp` : ''].filter(Boolean).join(' · ')
             : 'Prepared when you get there',
         }
+        // The section under way shows its lessons, as the dashboard does: where you are inside it, and what comes next
+        const lessons = line.mark === 'now' ? dashboard(c)?.phases[i]?.lessons ?? [] : []
+        return [line, ...lessons.map(l => ({ mark: LESSON_MARK[l.status], text: l.title, sub: true, ...(l.steps ?? LESSON_NOTE[l.status] ? { detail: l.steps ?? LESSON_NOTE[l.status] } : {}) }))]
       }),
       ...(!segmentOrder(course).some(id => c.segments[id])
         ? { result: { tone: 'wait' as const, text: 'Your first lesson is being written and checked. About a minute.' }, actions: [PROGRESS, EXPLORE] }
@@ -622,7 +625,8 @@ export function screen(c: Ctx): Screen {
     }
   }
   const total = seg.steps.filter(x => !x.drill).length
-  const progress = { label: `${seg.title} · ${step.drill ? 'practice' : `${stepNumber(seg, index)} of ${total}`}`, done: stepNumber(seg, index) - 1, total }
+  // The place line is also the way to the path: one tap from any step, and Continue there comes back to it
+  const progress = { label: `${seg.title} · ${step.drill ? 'practice' : `${stepNumber(seg, index)} of ${total}`}`, done: stepNumber(seg, index) - 1, total, action: 'curriculum' }
   const level = s.hints[step.id] ?? 0
   const base = {
     title: step.title, progress, body: step.body,
@@ -755,7 +759,12 @@ const nextActions = (c: Ctx, label: string): Action[] => {
   return !a || a === 'ready' ? [act('start', label, true, 'enter')] : a === 'missing' ? [act('retry', 'Write it now', true, 'enter')] : []
 }
 
+const LESSON_MARK = { done: 'ok', now: 'now', ready: 'todo', todo: 'todo', writing: 'run', failed: 'fail' } as const
+const LESSON_NOTE: Partial<Record<keyof typeof LESSON_MARK, string>> = { writing: 'Being written', failed: 'Could not be written' }
 const PROGRESS = act('progress', 'Progress', false, 'g')
+// A way back names where it goes, so nobody has to remember what is underneath
+const BACK_TO: Partial<Record<LearnerState['stage'], string>> = { lesson: 'Back to the lesson', curriculum: 'Back to your path', recap: 'Back to Today' }
+const backTo = (s: LearnerState, fallback: string) => BACK_TO[s.stage] ?? fallback
 // Explore is open from every lesson screen: any topic, read freely, nothing graded
 const EXPLORE = act('explore', 'Explore', false, 'e')
 
@@ -772,7 +781,7 @@ function exploreScreen(x: Explore, s: LearnerState): Screen {
   if (x.writing) return {
     kind: 'explore', title,
     result: { tone: 'wait', text: 'Writing a detailed reading and running its examples on your machine. About a minute.' },
-    actions: [act('home', 'Other topics', false, 'e'), act('back', 'Close', false, 'b')],
+    actions: [act('home', 'Other topics', false, 'e'), act('back', backTo(s, 'Close'), false, 'b')],
   }
   const r = x.reading
   if (!r) {
@@ -782,7 +791,7 @@ function exploreScreen(x: Explore, s: LearnerState): Screen {
       body: 'Open any topic and read as much as you want. Nothing here is a test.',
       ...(topics.length ? { choices: topics.map((text, i) => ({ n: i + 1, text })) } : {}),
       input: { placeholder: 'Or type any topic' }, ...note,
-      actions: [act('back', 'Close', false, 'b')],
+      actions: [act('back', backTo(s, 'Close'), false, 'b')],
     }
   }
   const seen = new Set(s.read[r.id] ?? [])
@@ -805,7 +814,7 @@ function exploreScreen(x: Explore, s: LearnerState): Screen {
       last ? act('home', 'Other topics', true, 'enter') : act('next', 'Next section', true, 'enter'),
       ...(i > 0 ? [act('prev', 'Previous', false, 'left')] : []),
       act('contents', 'Contents', false, 'c'), act('deeper', 'Go deeper', false, 'd'),
-      ...(last ? [] : [act('home', 'Other topics', false, 'e')]), act('back', 'Close', false, 'b'),
+      ...(last ? [] : [act('home', 'Other topics', false, 'e')]), act('back', backTo(s, 'Close'), false, 'b'),
     ],
   }
 }
@@ -849,7 +858,7 @@ const stateText = (state: string) => state.replace('-', ' ')
 
 function progressScreen(c: Ctx): Screen {
   const st = stats(c.course!, c.state, c.now)
-  const base = { kind: 'progress' as const, title: 'Your progress', progress: overall(c), actions: [act('back', 'Back', true, 'b')] }
+  const base = { kind: 'progress' as const, title: 'Your progress', progress: overall(c), actions: [act('back', c.welcome ? 'Back' : backTo(c.state, 'Back'), true, 'b')] }
   if (!st.answers) return { ...base, body: 'No answers yet. Your accuracy, learning curve, strengths and weaknesses show here after your first questions.' }
   const right = (k: { accuracy: number; answers: number }) => `${Math.round(k.accuracy * k.answers)} of ${k.answers} right`
   const lowest = Math.min(...st.curve), latest = st.curve.at(-1) ?? 0

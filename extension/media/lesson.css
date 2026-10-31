@@ -17,6 +17,7 @@
 body { margin: 0; padding: var(--tm-s3) var(--tm-s4) var(--tm-s5); color: var(--tm-fg); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); line-height: 1.55; background: transparent; }
 main { max-width: 68ch; }
 .progress { display: flex; align-items: center; gap: var(--tm-s2); color: var(--tm-muted); font-size: .9em; margin-bottom: var(--tm-s3); }
+.progress .place { color: inherit; font-size: inherit; text-align: left; }
 .progress .bar { flex: 1; height: 6px; border-radius: 99px; background: var(--tm-track); overflow: hidden; }
 .progress .bar > i { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--tm-accent), color-mix(in srgb, var(--tm-accent) 70%, var(--tm-right))); transition: width 300ms ease-out; }
 h1 { font-size: 1.15em; font-weight: 600; line-height: 1.3; margin: 0 0 var(--tm-s3); padding-left: var(--tm-s2); border-left: 3px solid var(--tm-accent); }
@@ -47,6 +48,7 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 .compare .stops { color: var(--tm-muted); }
 ul.lines { list-style: none; margin: var(--tm-s2) 0 var(--tm-s3); padding: 0; }
 ul.lines li { display: grid; grid-template-columns: 20px 1fr; gap: 0 var(--tm-s1); padding: var(--tm-s1) 0; }
+ul.lines li.sub { padding-left: var(--tm-s5); }
 ul.lines .detail { grid-column: 2; color: var(--tm-muted); font-size: .9em; }
 .mark-ok { color: var(--tm-right); } .mark-fail { color: var(--tm-amber); } .mark-todo, .mark-run { color: var(--tm-muted); } .mark-now { color: var(--tm-focus); } .mark-half { color: var(--tm-accent); }
 .choices { display: flex; flex-direction: column; gap: var(--tm-s2); margin: var(--tm-s3) 0; }

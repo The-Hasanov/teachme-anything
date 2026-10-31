@@ -1,8 +1,8 @@
-export type Line = { mark: 'ok' | 'todo' | 'fail' | 'run' | 'now' | 'half'; text: string; detail?: string }
+export type Line = { mark: 'ok' | 'todo' | 'fail' | 'run' | 'now' | 'half'; text: string; detail?: string; sub?: boolean }
 export type Action = { id: string; label: string; primary?: boolean; key?: string }
 export type Screen = {
   kind: 'empty' | 'welcome' | 'intake' | 'setup' | 'curriculum' | 'step' | 'question' | 'exercise' | 'recap' | 'progress' | 'explore'
-  progress?: { label: string; done: number; total: number }
+  progress?: { label: string; done: number; total: number; action?: string }
   title: string
   body?: string
   more?: string

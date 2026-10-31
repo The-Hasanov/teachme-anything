@@ -107,6 +107,12 @@ assert.match(h, /data-choose="1"\s+aria-label="1: What a decorator is, read"><sp
 assert.ok(!/data-choose="2"[^>]*, read/.test(h));
 assert.ok(!/disabled/.test(h), 'every section can be opened, read or not');
 assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'media', 'lesson.css'), 'utf8'), /\.choice \.n \{[^}]*color: var\(--vscode-textLink-foreground/, 'the choice number uses the link colour, readable in both themes');
+// The place line of a lesson step is a button to the path
+h = draw({ kind: 'step', title: 'T', progress: { label: 'Counting steps · 4 of 8', done: 3, total: 8, action: 'curriculum' }, actions: [] });
+assert.match(h, /<button class="link place" data-action="curriculum" title="Open your path">Counting steps · 4 of 8<\/button>/);
+assert.match(draw({ kind: 'step', title: 'T', progress: { label: 'Section 1 of 4', done: 1, total: 4 }, actions: [] }), /<div class="progress"><span>Section 1 of 4<\/span>/);
+// Path: the lessons of the section under way sit under it
+assert.match(draw({ kind: 'curriculum', title: 'P', lines: [{ mark: 'now', text: 'Branches' }, { mark: 'ok', text: 'Moves', sub: true }, { mark: 'now', text: 'Borrowing', sub: true, detail: '3 of 8 steps' }], actions: [] }), /<li><span class="mark-now">[\s\S]*<li class="sub"><span class="mark-ok">[\s\S]*<li class="sub"><span class="mark-now">[\s\S]*<span class="detail">3 of 8 steps<\/span>/);
 // Code in a step's text: a fence, or lines that are each one `span`, is a code block, not a pill per line
 h = draw({ kind: 'step', title: 'T', actions: [], body: 'Does it compile?\n\n```rust\nlet s = String::from("hi");\n\nprintln!("<{}>", s);\n```\n\nThen `s` moves.' });
 assert.match(h, /<p>Does it compile\?<\/p><pre class="code"><code>/);

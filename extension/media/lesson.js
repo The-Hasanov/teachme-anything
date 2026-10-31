@@ -98,7 +98,7 @@
     vscode.postMessage({ type: 'press', press, t: Date.now() });
   }
 
-  const lines = (ls) => `<ul class="lines">${ls.map(l => `<li><span class="mark-${l.mark}">${icon(...MARK[l.mark])}</span><span>${esc(l.text)}</span>${l.detail ? `<span class="detail">${esc(l.detail)}</span>` : ''}</li>`).join('')}</ul>`;
+  const lines = (ls) => `<ul class="lines">${ls.map(l => `<li${l.sub ? ' class="sub"' : ''}><span class="mark-${l.mark}">${icon(...MARK[l.mark])}</span><span>${esc(l.text)}</span>${l.detail ? `<span class="detail">${esc(l.detail)}</span>` : ''}</li>`).join('')}</ul>`;
   const chart = (c) => {
     const n = c.points.length, x = (i) => (8 + i * 190 / (n - 1)).toFixed(1), y = (v) => (54 - v * 48).toFixed(1);
     const grid = [0, 0.5, 1].map(v => `<line class="grid" x1="8" x2="198" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="0" y="${(Number(y(v)) + 2).toFixed(1)}">${v * 100}</text>`).join('');
@@ -116,7 +116,7 @@
     if (!screen) { root.innerHTML = '<main><p class="offline">Loading your lesson…</p></main>'; return; }
     const s = screen;
     const out = [];
-    if (s.progress) out.push(`<div class="progress"><span>${esc(s.progress.label)}</span><span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${s.progress.total}" aria-valuenow="${s.progress.done}"><i data-w="${Math.round(100 * s.progress.done / Math.max(1, s.progress.total))}"></i></span></div>`);
+    if (s.progress) out.push(`<div class="progress">${s.progress.action ? `<button class="link place" data-action="${esc(s.progress.action)}" title="Open your path">${esc(s.progress.label)}</button>` : `<span>${esc(s.progress.label)}</span>`}<span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${s.progress.total}" aria-valuenow="${s.progress.done}"><i data-w="${Math.round(100 * s.progress.done / Math.max(1, s.progress.total))}"></i></span></div>`);
     out.push(`<h1 tabindex="-1">${esc(s.title)}</h1>`);
     if (s.body) out.push(md(s.body));
     if (s.compare) out.push(`<div class="compare">${md(s.compare.text)}<p class="stops"><strong>Where it stops:</strong> ${esc(s.compare.stops)}</p></div>`);
