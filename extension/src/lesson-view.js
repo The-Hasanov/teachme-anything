@@ -22,7 +22,10 @@ function registerLessonView(context) {
             try { layout.apply(op); } catch (e) { console.error('[teachme] layout', e); }
         },
     });
-    const dashboard = registerDashboard(context, layout, channel);
+    const dashboard = registerDashboard(context, layout, channel, async () => {
+        await vscode.commands.executeCommand('teachme.lesson.focus');
+        post({ type: 'flash' });
+    });
     channel.ready.catch(e => vscode.window.showErrorMessage(`Teach Me: the lesson view cannot listen: ${e.message}`));
     context.subscriptions.push({ dispose: () => channel.close() }, vscode.workspace.onDidChangeWorkspaceFolders(() => channel.setFolders(folders())));
 
@@ -61,7 +64,7 @@ function registerLessonView(context) {
         channel.push({ type: 'press', press: { action: 'progress' }, t: Date.now() });
     }));
     context.subscriptions.push(vscode.window.registerWebviewViewProvider('teachme.lesson', provider, { webviewOptions: { retainContextWhenHidden: true } }));
-    return { channel, layout, dashboard, onScreen: (fn) => { watchers.add(fn); return () => watchers.delete(fn); } };
+    return { channel, layout, dashboard, visible: () => !!view?.visible, onScreen: (fn) => { watchers.add(fn); return () => watchers.delete(fn); } };
 }
 
 module.exports = { registerLessonView };

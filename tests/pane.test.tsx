@@ -216,6 +216,43 @@ test('Docker installed but its engine stopped is not set up: the learner gets In
   await ui.unmount()
 })
 
+test('placement in the pane: questions come with the course, are answered by clicks, and lesson 1 is written from the results', async ($, on) => {
+  world(on)
+  const { prompts, relay } = agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Kubernetes' } as never)
+  await relay()
+  expect(prompts()[0]).toMatch(/Add "placement": 4 or 5 questions/)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const texts = async () => [...await ui.findAll({ type: 'Text' }), ...await ui.findAll({ type: 'Markdown' })].map(t => t.text).join(' | ')
+  const buttons = async () => (await ui.findAll({ type: 'Button' })).map(b => b.text)
+  // "I use it, with gaps": the check waits for the course its questions come with
+  for (const key of ['choose-1', 'choose-3', 'choose-1']) await ui.press({ key })
+  expect(await texts()).toMatch(/Writing your course/)
+
+  const q = (id: string, skill: string, body: string) => ({ id, kind: 'mcq', skill, difficulty: 1, title: id, body, choices: [{ text: 'Containers', why: 'Right.' }, { text: 'Nodes', why: 'Nodes run pods.' }], key: [0] })
+  const course = {
+    format: 'teachme.course/1', id: 'k8s', subject: 'Kubernetes', goal: 'run an app on a cluster', intake: [],
+    skills: [{ id: 'pods', title: 'Pods', type: 'concept', prereqs: [], misconceptions: [] }, { id: 'services', title: 'Services', type: 'concept', prereqs: ['pods'], misconceptions: [] }],
+    phases: [{ id: 'basics', title: 'Pods', skills: ['pods', 'services'], segments: ['basics-1'] }],
+    setup: [{ id: 'verify', title: 'Checked on your machine', adapter: 'verify', where: 'local' }],
+  }
+  const submit = async (c: unknown) => JSON.parse((await $.tool.call({ tool: 'mcp__teachme-anything__submit_course', course: c } as never)).result as string)
+  expect((await submit({ ...course, placement: [{ ...q('pl1', 'pods', 'What runs in a pod?'), kind: 'concept' }] })).errors.join(' ')).toMatch(/placement pl1: kind "mcq" or "predict"/)
+  expect(await submit({ ...course, placement: [q('pl1', 'pods', 'What runs in a pod?'), q('pl2', 'services', 'What does a Service give pods?')] })).toMatchObject({ ok: true })
+  expect(prompts()).toHaveLength(1)
+
+  expect(await texts()).toMatch(/Where to start · 1 of 2[\s\S]*What runs in a pod\?/)
+  expect(await buttons()).toEqual(['Containers', 'Nodes', "I don't know", 'Skip the check', 'Open in VS Code'])
+  await ui.press({ key: 'choose-1' })
+  await ui.press({ key: 'act-dontknow' })
+  expect(await texts()).toMatch(/Your lessons start at \*?\*?Services/)
+  await ui.press({ key: 'act-continue' })
+  await relay()
+  expect(prompts()[1]).toMatch(/Write segment "basics-1"[\s\S]*start at the first skill they missed[\s\S]*Placement check: knew Pods; missed Services\./)
+  await ui.unmount()
+})
+
 test('a subject with no course: the intake runs while the author writes the course, which is validated first', async ($, on) => {
   const { files } = world(on)
   const { prompts, relay } = agents($, on)
@@ -297,6 +334,13 @@ test('the terminal pane draws a trace table, a reorder answer and a stepper fram
   ui = await show(place(bigo.course, bigo.bigo1, 'o2', [{ action: 'frame-next' }]))
   expect((await ui.find({ type: 'Text', text: 'Frame 2 of 6' }))).toBeTruthy()
   expect((await ui.find({ type: 'Button', text: 'Next frame' }))).toBeTruthy()
+  // ← is not a letter: Previous frame takes P, unless another button on the screen already has it
+  const hotkeyOf = async (text: string) => JSON.stringify((await ui.findAll({ type: 'Button' })).find(b => b.text === text)).match(/"hotkey":"(\w)"/)?.[1]
+  expect(await hotkeyOf('Previous frame')).toBe('p')
+  await ui.unmount()
+  ui = await show({ kind: 'step', title: 'T', actions: [{ id: 'practice', label: 'Practice this', key: 'p' }, { id: 'frame-prev', label: 'Previous frame', key: 'left' }] } as Screen)
+  expect(await hotkeyOf('Practice this')).toBe('p')
+  expect(await hotkeyOf('Previous frame')).toBeUndefined()
   await ui.unmount()
 })
 
@@ -368,6 +412,7 @@ test('a whole Big-O lesson and a Python code task in the terminal pane, buttons 
   expect(shown).toEqual(expect.arrayContaining(['100 ┤', '  0 ┤']))
   expect(shown.filter(t => /^[ ▁▂▃▄▅▆▇█]+$/.test(t) && /█/.test(t)).length).toBeGreaterThan(1)
   expect(shown).toEqual(expect.arrayContaining(['Strengths', 'To work on', 'Skills']))
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toContain('Back to Today')
   await press(ui, 'act-back')
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text)).toContain('Today')
   const tool = await $.tool.call({ tool: 'mcp__teachme-anything__progress' } as never)
@@ -419,10 +464,11 @@ test('Explore with no course: open a topic, the reading is checked before it is 
   await ui.press({ key: 'act-next' })
   expect(await texts()).toMatch(/Section 2 of 3[\s\S]*Moves[\s\S]*moved/)
   await ui.press({ key: 'act-contents' })
-  expect(await buttons()).toEqual(['✓ One owner', '✓ Moves', 'Drop', 'Back to the reading', 'Open in VS Code'])
+  expect(await buttons()).toEqual(['✓ One owner', '▸ ✓ Moves (here)', 'Drop', 'Back to the reading', 'Open in VS Code'])
   await ui.press({ key: 'choose-3' })
   expect(await texts()).toMatch(/Section 3 of 3[\s\S]*Drop[\s\S]*To explore next: Borrowing · Lifetimes · Smart pointers/)
   expect(await buttons()).toEqual(['Other topics', 'Previous', 'Contents', 'Go deeper', 'Close', 'Open in VS Code'])
+  expect(JSON.stringify((await ui.findAll({ type: 'Button' })).find(b => b.text === 'Previous'))).toMatch(/"hotkey":"p"/)
   await ui.press({ key: 'act-deeper' })
   await relay()
   expect(prompts()[1]).toMatch(/goes deeper into "Drop", a section of the reading "Rust ownership"/)
@@ -434,6 +480,10 @@ test('Explore with no course: open a topic, the reading is checked before it is 
   expect(toasts).toEqual([expect.stringMatching(/"Rust ownership: Drop" is ready in Explore/)])
   await $.tool.call({ tool: 'mcp__teachme-anything__explore' } as never)
   expect(await buttons()).toEqual(['Rust ownership · 3 of 3 read', 'Rust ownership: Drop · 0 of 3 read', 'Borrowing', 'Lifetimes', 'Smart pointers', 'Close', 'Open in VS Code'])
+  // A reading opened again starts where it was left, not at its first section
+  await ui.press({ key: 'choose-1' })
+  expect(await texts()).toMatch(/Section 3 of 3[\s\S]*Drop/)
+  await ui.press({ key: 'act-home' })
 
   // A reading whose author gives up says so, and the learner can ask again
   await ui.press({ key: 'choose-4' })
@@ -442,7 +492,7 @@ test('Explore with no course: open a topic, the reading is checked before it is 
   expect(await texts()).toMatch(/The reading on "Lifetimes" did not work this time/)
 
   const log = Object.entries(files).find(([f]) => f.includes('/.teachme/log/'))?.[1] ?? ''
-  expect(log.trim().split('\n').map(l => JSON.parse(l)).map(e => `${e.type}:${e.reading}:${e.section}`)).toEqual(['read:rust-ownership:0', 'read:rust-ownership:1', 'read:rust-ownership:2'])
+  expect(log.trim().split('\n').map(l => JSON.parse(l)).map(e => `${e.type}:${e.reading}:${e.section}`)).toEqual(['read:rust-ownership:0', 'read:rust-ownership:1', 'read:rust-ownership:2', 'read:rust-ownership:2'])
   expect(calls.model).toBe(0)
   await ui.unmount()
 })
@@ -474,6 +524,7 @@ test('Explore from a lesson opens on the step\'s skill, and Close returns to the
   await ui.press({ key: 'act-explore' })
   await relay()
   expect(prompts()).toEqual([expect.stringMatching(/reading on "Lists, indexes and slices"[\s\S]*Pitch it to this learner/)])
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toContain('Back to the lesson')
   await ui.press({ key: 'act-back' })
   expect(await title()).toMatch(/A list, by position/)
   await ui.unmount()
@@ -569,6 +620,105 @@ test('#14 Ask sends the step to the agent, and its explanation shows under the s
   await ui.press({ key: 'act-back' })
   expect(await texts()).not.toMatch(/Answering|Explaining|Ask in the chat/)
   expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toContain('Ask')
+  await ui.unmount()
+})
+
+// #lost-exam: a learner's answers vanished when they asked in the chat, and after a restart in the check before the next lesson
+const TO_TRACE = ['choose-1', 'choose-1', 'choose-1', 'act-continue', 'act-start', 'act-next', 'act-frame-next', 'act-frame-next', 'act-next', 'choose-1', 'act-next']
+type Drawn = { findAll(q: { type: 'Text' | 'Markdown' | 'Button' }): Promise<readonly { text?: string }[]> }
+const keys = async (ui: Drawn) => (await ui.findAll({ type: 'Button' })).map(b => (b as unknown as { key: string }).key)
+const shown = async (ui: Drawn) => [...await ui.findAll({ type: 'Text' }), ...await ui.findAll({ type: 'Markdown' }), ...await ui.findAll({ type: 'Button' })].map(t => t.text).join(' | ')
+
+test('#lost-exam a question in the chat keeps the half-filled answer on screen, still answerable', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  on('prompt.submit', (_, e) => ({ text: e.text ?? '' }))
+  agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await seed($, w.files, bigo)
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  for (const key of [...TO_TRACE, 'choose-1']) await ui.press({ key })
+  await $.prompt.submit({ text: 'why does the inner loop count?' } as never)
+  expect(await shown(ui)).toMatch(/Trace a loop in a loop[\s\S]*2\s+▸\?[\s\S]*Ask in the chat/)
+  expect(await keys(ui)).toEqual(expect.arrayContaining(['choose-3', 'act-undo', 'act-back']))
+  for (const key of ['choose-3', 'choose-6', 'choose-8']) await ui.press({ key })
+  expect(await shown(ui)).toMatch(/Right, all of it\./)
+  expect(await shown(ui)).not.toMatch(/Ask in the chat/)
+  // The place line opens the path; Continue there comes back to the same answered step
+  await ui.press({ key: 'act-curriculum' })
+  expect(await shown(ui)).toMatch(/Your path to:/)
+  await ui.press({ key: 'act-start' })
+  expect(await shown(ui)).toMatch(/Trace a loop in a loop[\s\S]*Right, all of it\./)
+  await ui.unmount()
+})
+
+test('#lost-exam a restart in the check before the next lesson resumes it, answer kept, then goes on', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await seed($, w.files, bigo)
+  let ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  for (const key of [...TO_TRACE, 'choose-2', 'choose-3', 'choose-6', 'choose-8']) await ui.press({ key })
+  // A learner who answers what is shown, wrong where there is a choice, until the check before the next lesson
+  for (let i = 0; i < 30 && !/Before you move on/.test(await shown(ui)); i++) {
+    const k = await keys(ui)
+    await ui.press({ key: k.includes('act-next') ? 'act-next' : k.find(x => x.startsWith('choose-'))! })
+  }
+  expect(await shown(ui)).toMatch(/Before you move on · 1 of 1/)
+  await ui.press({ key: 'choose-2' })
+  const check = await shown(ui)
+  await ui.unmount()
+
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  expect(await shown(ui)).toMatch(/You stopped at: \*\*Before you move on\*\* · 1 of 1/)
+  await ui.press({ key: 'act-continue' })
+  expect(await shown(ui)).toBe(check)
+  await ui.press({ key: 'act-next' })
+  expect(await shown(ui)).toMatch(/Today/)
+  await ui.unmount()
+})
+
+test('Previous in the pane: earlier steps read-only, then Back to the half-answered trace, nothing lost', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await seed($, w.files, bigo)
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  for (const key of [...TO_TRACE, 'choose-1']) await ui.press({ key })
+  const before = await shown(ui)
+  await ui.press({ key: 'act-prev' })
+  expect(await shown(ui)).toMatch(/Counting steps · 3 of 8 · looking back[\s\S]*The worst case/)
+  expect(await keys(ui)).toEqual(expect.arrayContaining(['act-back', 'act-prev']))
+  expect(await keys(ui)).not.toContain('act-peek-next')
+  expect((await keys(ui)).filter(k => k.startsWith('choose-'))).toEqual([])
+  await ui.press({ key: 'act-prev' })
+  expect(await shown(ui)).toMatch(/2 of 8 · looking back[\s\S]*Linear search, step by step/)
+  await ui.press({ key: 'act-peek-next' })
+  expect(await shown(ui)).toMatch(/3 of 8 · looking back/)
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toContain('Back to Trace a loop in a loop')
+  await ui.press({ key: 'act-back' })
+  expect(await shown(ui)).toBe(before)
+  await ui.unmount()
+})
+
+test('every reading studied stays reachable: all of them in Explore and on the path, and one opens from the path', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  agents($, on)
+  for (let i = 0; i < 10; i++) w.files[`${ROOT}/.teachme/read/topic-${i}.json`] = JSON.stringify({ ...reading, id: `topic-${i}`, topic: `Topic ${i}`, sections: reading.sections.map(x => ({ ...x, code: undefined })) })
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await seed($, w.files, bigo)
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  for (const key of ['choose-1', 'choose-1', 'choose-1', 'act-continue']) await ui.press({ key })
+  const texts = async () => (await ui.findAll({ type: 'Button' })).map(b => b.text)
+  expect((await texts()).filter(t => /^Topic \d$/.test(t))).toHaveLength(10)
+  await ui.press({ key: 'act-explore' })
+  expect((await texts()).filter(t => /^Topic \d · 0 of 3 read$/.test(t))).toHaveLength(10)
+  await ui.press({ key: 'act-back' })
+  await ui.press({ key: 'line-read:topic-7' })
+  expect(await shown(ui)).toMatch(/Section 1 of 3[\s\S]*Topic 7/)
+  expect(await texts()).toContain('Back to your path')
+  await ui.press({ key: 'act-back' })
+  expect(await shown(ui)).toMatch(/Your path to:[\s\S]*Your readings/)
   await ui.unmount()
 })
 

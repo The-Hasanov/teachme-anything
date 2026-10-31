@@ -2,11 +2,13 @@ const fs = require('fs');
 const assert = require('assert');
 const src = fs.readFileSync(require('path').join(__dirname, '..', 'media', 'lesson.js'), 'utf8');
 const listeners = {};
-const root = { innerHTML: '', querySelectorAll: () => [] };
+const focused = [], scrolls = [];
+const root = { innerHTML: '', querySelectorAll: () => [], querySelector: (sel) => ({ disabled: false, focus: () => focused.push(sel) }) };
+const document = { getElementById: () => root, querySelectorAll: () => [], querySelector: () => null, addEventListener: (t, f) => { listeners[t] = f; }, activeElement: null };
+const window = { addEventListener: (t, f) => { listeners[t] = f; }, scrollY: 0, scrollTo: (x, y) => scrolls.push(y) };
 const sandbox = {
   acquireVsCodeApi: () => ({ getState: () => undefined, setState() {}, postMessage() {} }),
-  document: { getElementById: () => root, querySelectorAll: () => [], querySelector: () => null, addEventListener() {}, activeElement: null },
-  window: { addEventListener: (t, f) => { listeners[t] = f; }, scrollY: 0, scrollTo() {} },
+  document, window,
 };
 new Function(...Object.keys(sandbox), src)(...Object.values(sandbox));
 const draw = (screen) => { listeners.message({ data: { type: 'screen', screen } }); return root.innerHTML; };
@@ -63,7 +65,78 @@ assert.match(h, /<span class="t-k">import<\/span> functools/);
 assert.match(h, /<div class="output">[\s\S]*<code>add<\/code>/);
 assert.match(h, /<button class="btn" data-action="next">Next section<span class="kbd">Enter<\/span><\/button>/);
 for (const [id, key] of [['prev', '←'], ['contents', 'C'], ['deeper', 'D'], ['home', 'E'], ['back', 'B']]) assert.match(h, new RegExp(`data-action="${id}" aria-keyshortcuts="${key}"`), `${id} has its key`);
-h = draw({ kind: 'explore', title: 'Python decorators', body: '8 sections. Open any of them.', choices: [{ n: 1, text: '✓ What a decorator is' }, { n: 2, text: 'Why it works' }], actions: [{ id: 'read', label: 'Back to the reading', primary: true, key: 'b' }] });
-assert.match(h, /data-choose="1"\s+aria-label="1: ✓ What a decorator is"/);
+for (const [id, key] of [['prev', '←'], ['contents', 'C']]) assert.match(h, new RegExp(`data-action="${id}" aria-keyshortcuts="${key}">[^<]+<span class="kbd">${key}</span></button>`), `${id} shows its key`);
+assert.ok(!/class="keys"/.test(h), 'the key list shows only when ? opens it');
+const keydown = (key) => listeners.keydown({ key, target: { tagName: 'BODY' }, preventDefault() {} });
+keydown('?');
+assert.match(root.innerHTML, /<p class="keys">Enter Next section · ← Previous · C Contents · D Go deeper · E Other topics · B Close · \? hide<\/p>/, "the key list is this screen's buttons");
+keydown('?');
+assert.ok(!/class="keys"/.test(root.innerHTML), '? closes it again');
+assert.match(draw({ kind: 'progress', title: 'Your progress', groups: [{ title: 'Skills', lines: [{ mark: 'half', text: 'Branches' }, { mark: 'now', text: 'Merging' }] }], actions: [] }), /<span class="mark-half"><span class="codicon codicon-color-mode" aria-label="learning" role="img"><\/span><\/span><span>Branches/, 'a skill being learned has its own half mark');
+
+// Explore's next section keeps the title: still a new screen, read from the top
+const section = { kind: 'explore', title: 'Python decorators', progress: { label: 'Section 3 of 8', done: 3, total: 8 }, body: 'Three', actions: [{ id: 'next', label: 'Next section', primary: true, key: 'enter' }] };
+draw(section);
+window.scrollY = 400; focused.length = 0; scrolls.length = 0;
+h = draw({ ...section, progress: { label: 'Section 4 of 8', done: 4, total: 8 }, body: 'Four' });
+assert.match(h, /<main class="k-explore enter">/);
+assert.deepStrictEqual(scrolls, [0], 'a new section starts at the top');
+assert.deepStrictEqual(focused, ['h1']);
+
+// A press that keeps the screen keeps focus: on the pressed button, else on the primary
+const q = { kind: 'step', title: 'Q', actions: [{ id: 'check', label: 'Check', primary: true, key: 'enter' }, { id: 'hint', label: 'Hint', key: 'h' }] };
+draw(q);
+focused.length = 0; scrolls.length = 0;
+document.activeElement = { dataset: { action: 'hint' } };
+keydown('h');
+document.activeElement = null;
+draw({ ...q, hint: { level: 1, text: 'Look' } });
+assert.deepStrictEqual(scrolls, [400], 'the same screen keeps its scroll');
+assert.deepStrictEqual(focused, ['[data-action="hint"]']);
+focused.length = 0;
+keydown('h');
+draw({ ...q, hint: { level: 2, text: 'Closer' } });
+assert.deepStrictEqual(focused, ['.actions .btn'], 'a key press with nothing focused lands on the primary');
+window.scrollY = 0;
+
+// Tones: a wait spins, info is a note; a read section is marked with an icon
+assert.match(draw({ kind: 'setup', title: 'Your setup', result: { tone: 'info', text: 'Teach Me installs it' }, actions: [] }), /class="result info"[^>]*><span class="codicon codicon-info"/);
+assert.match(draw({ kind: 'explore', title: 'W', result: { tone: 'wait', text: 'Writing' }, actions: [] }), /class="result wait"[^>]*><span class="codicon codicon-loading"/);
+h = draw({ kind: 'explore', title: 'Python decorators', body: '8 sections. Open any of them.', choices: [{ n: 1, text: 'What a decorator is', done: true }, { n: 2, text: 'Why it works' }], actions: [{ id: 'read', label: 'Back to the reading', primary: true, key: 'b' }] });
+assert.match(h, /data-choose="1"\s+aria-label="1: What a decorator is, read"><span class="n">1<\/span><span>What a decorator is <span class="done"><span class="codicon codicon-pass"/);
+assert.ok(!/data-choose="2"[^>]*, read/.test(h));
 assert.ok(!/disabled/.test(h), 'every section can be opened, read or not');
-console.log('PASS view: highlighting, escaping, output lines, markdown, explore');
+assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'media', 'lesson.css'), 'utf8'), /\.choice \.n \{[^}]*color: var\(--vscode-textLink-foreground/, 'the choice number uses the link colour, readable in both themes');
+// The place line of a lesson step is a button to the path
+h = draw({ kind: 'step', title: 'T', progress: { label: 'Counting steps · 4 of 8', done: 3, total: 8, action: 'curriculum' }, actions: [] });
+assert.match(h, /<button class="link place" data-action="curriculum" title="Open your path">Counting steps · 4 of 8<\/button>/);
+assert.match(draw({ kind: 'step', title: 'T', progress: { label: 'Section 1 of 4', done: 1, total: 4 }, actions: [] }), /<div class="progress"><span>Section 1 of 4<\/span>/);
+// Path: the lessons of the section under way sit under it
+assert.match(draw({ kind: 'curriculum', title: 'P', lines: [{ mark: 'now', text: 'Branches' }, { mark: 'ok', text: 'Moves', sub: true }, { mark: 'now', text: 'Borrowing', sub: true, detail: '3 of 8 steps' }], actions: [] }), /<li><span class="mark-now">[\s\S]*<li class="sub"><span class="mark-ok">[\s\S]*<li class="sub"><span class="mark-now">[\s\S]*<span class="detail">3 of 8 steps<\/span>/);
+// A path line with an action is a link; the open section in Explore's contents says so
+assert.match(draw({ kind: 'curriculum', title: 'P', lines: [{ mark: 'ok', text: 'Moves', sub: true, action: 'open:moves-1' }], actions: [] }), /<li class="sub"><span class="mark-ok">[\s\S]*<button class="link" data-action="open:moves-1">Moves<\/button>/);
+h = draw({ kind: 'explore', title: 'R', choices: [{ n: 1, text: 'One', done: true }, { n: 2, text: 'Two', done: true, here: true }], actions: [] });
+assert.match(h, /data-choose="2"\s+aria-current="true" aria-label="2: Two, read, open now"/);
+assert.match(h, /Two <span class="done">[\s\S]*<span class="here">here<\/span>/);
+assert.ok(!/data-choose="1" aria-current/.test(h));
+// Code in a step's text: a fence, or lines that are each one `span`, is a code block, not a pill per line
+h = draw({ kind: 'step', title: 'T', actions: [], body: 'Does it compile?\n\n```rust\nlet s = String::from("hi");\n\nprintln!("<{}>", s);\n```\n\nThen `s` moves.' });
+assert.match(h, /<p>Does it compile\?<\/p><pre class="code"><code>/);
+assert.equal((h.match(/<span class="ln">/g) ?? []).length, 3, 'a blank line inside a fence stays in the block');
+assert.match(h, /<span class="t-k">let<\/span> s/);
+assert.ok(!/```|<\{\}>/.test(h), 'no fence marks, nothing becomes HTML');
+assert.match(h, /<p>Then <code>s<\/code> moves\.<\/p>/);
+h = draw({ kind: 'step', title: 'T', actions: [], body: 'A body:\n\n`let s = 1;`\n`s.push("<b>");`' });
+assert.equal((h.match(/<span class="ln">/g) ?? []).length, 2, 'code lines are one block');
+assert.ok(!/<p><code>|<b>/.test(h), 'not a pill each, and still escaped');
+// The dashboard's Lesson view button: an open view shows its step again, with a glow, from the top
+const flashed = [];
+root.querySelector = (sel) => sel === 'main' ? { classList: { add: (c) => flashed.push(c) } } : { disabled: false, focus: () => focused.push(sel) };
+focused.length = 0; scrolls.length = 0; window.scrollY = 300;
+listeners.message({ data: { type: 'flash' } });
+assert.match(root.innerHTML, /<main class="k-step enter">/);
+assert.deepStrictEqual(flashed, ['flash']);
+assert.deepStrictEqual(scrolls, [0]);
+assert.ok(focused.includes('h1'));
+assert.match(fs.readFileSync(require('path').join(__dirname, '..', 'media', 'lesson.css'), 'utf8'), /reduced-motion[^{]*\{[^}]*main\.flash/, 'no glow for reduced motion');
+console.log('PASS view: highlighting, escaping, output lines, markdown, explore, code in text, flash');

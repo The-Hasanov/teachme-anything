@@ -3,7 +3,7 @@
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
   --radius: 10px;
   --fg: var(--vscode-foreground);
-  --muted: var(--vscode-descriptionForeground);
+  --muted: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
   --border: var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, .25)));
   --surface: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
   --track: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
@@ -20,7 +20,8 @@ h1 { font-size: 1.6em; letter-spacing: -.01em; }
 h2 { font-size: 1.05em; }
 p { margin: 0; }
 
-.hero { display: flex; align-items: center; justify-content: space-between; gap: var(--s5); margin-bottom: var(--s4); animation: rise 360ms var(--ease) both; }
+.hero { display: flex; align-items: center; justify-content: space-between; gap: var(--s5); margin-bottom: var(--s4); }
+.first .hero { animation: rise 360ms var(--ease) both; }
 .hero-text { flex: 1; min-width: 0; }
 .goal { color: var(--muted); margin-top: var(--s1); }
 .badge { flex: none; width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
@@ -43,14 +44,15 @@ p { margin: 0; }
 .tabs button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .tabs .indicator { position: absolute; left: 0; bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); transition: transform 260ms var(--ease), width 260ms var(--ease); }
 
-.tab-body { animation: fade 220ms var(--ease) both; }
+.tab .tab-body { animation: fade 220ms var(--ease) both; }
 .phases, .control { display: grid; gap: var(--s3); }
-.card { padding: var(--s4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); transition: transform 180ms var(--ease), box-shadow 180ms var(--ease), border-color 180ms; animation: rise 320ms var(--ease) both; animation-delay: calc(var(--i, 0) * 40ms); }
+.card { padding: var(--s4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); transition: transform 180ms var(--ease), box-shadow 180ms var(--ease), border-color 180ms; }
+:is(.first, .tab) .card { animation: rise 320ms var(--ease) both; animation-delay: calc(var(--i, 0) * 40ms); }
 .card:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0, 0, 0, .18); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .label { display: block; color: var(--muted); font-size: .8em; text-transform: uppercase; letter-spacing: .06em; margin-bottom: var(--s1); }
 
-.phase-head { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s3); }
-.phase-head h2 { flex: 1; }
+.phase-head { position: relative; padding-right: 34px; display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s3); }
+.phase-head h2 { flex: 1; line-height: 1.2; }
 .phase-head .count { color: var(--muted); font-size: .9em; font-variant-numeric: tabular-nums; }
 .phase.ok .codicon { color: var(--right); }
 .phase.now .codicon { color: var(--accent); }
@@ -64,6 +66,8 @@ p { margin: 0; }
 .lesson .state { color: var(--muted); font-size: .88em; }
 .lesson.done .dot { background: var(--right); }
 .lesson.done .name { color: var(--muted); }
+.lesson .name.link { padding: 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+.lesson .name.link:hover { color: var(--fg); text-decoration: underline; }
 .lesson.now { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .lesson.now .dot { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
 .lesson.now .name { font-weight: 600; }
@@ -75,12 +79,15 @@ p { margin: 0; }
 .status { display: flex; align-items: center; gap: var(--s4); }
 .status p { color: var(--muted); margin-top: 2px; }
 .pulse { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); }
-.status.up .pulse { background: var(--right); animation: glow 2s ease-in-out infinite; }
-.now h2 { margin-bottom: var(--s3); }
-.now .overall { margin-bottom: var(--s3); }
-.result { padding: var(--s2) var(--s3); border-radius: 6px; background: color-mix(in srgb, var(--fg) 6%, transparent); margin-bottom: var(--s3); }
-.result.right { color: var(--right); }
-.result.wrong { color: var(--amber); }
+.status.up .pulse { background: var(--right); }
+.status.up.flash .pulse { animation: glow 2s ease-in-out 1; }
+.control .now h2 { margin-bottom: var(--s3); }
+.control .now .overall { margin-bottom: var(--s3); }
+.result { display: flex; gap: var(--s2); align-items: flex-start; padding: var(--s2) var(--s3); border-radius: 6px; border-left: 3px solid var(--border); background: color-mix(in srgb, var(--fg) 6%, transparent); margin-bottom: var(--s3); }
+.result .codicon { margin-top: 2px; color: var(--muted); }
+.result.right { border-left-color: var(--right); } .result.right .codicon { color: var(--right); }
+.result.wrong { border-left-color: var(--amber); } .result.wrong .codicon { color: var(--amber); }
+.result.wait .codicon { animation: spin 1.6s linear infinite; }
 .actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .btn { display: inline-flex; align-items: center; gap: var(--s2); padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); font: inherit; cursor: pointer; transition: transform 120ms var(--ease), background 160ms, opacity 160ms; }
 .btn:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground); }
@@ -90,7 +97,7 @@ p { margin: 0; }
 .btn:disabled { opacity: .45; cursor: default; }
 .btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 
-.ghost { display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 160ms, background 160ms, color 160ms; }
+.ghost { position: absolute; right: 0; top: 50%; translate: 0 -50%; display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 160ms, background 160ms, color 160ms; }
 .phase:hover .ghost, .ghost:focus-visible { opacity: 1; }
 .ghost:hover { color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent); }
 .ghost:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
@@ -101,6 +108,7 @@ p { margin: 0; }
 .empty .codicon[class*='codicon-'] { font-size: 40px; }
 
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes spin { to { transform: rotate(360deg); } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
 @keyframes glow { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--right) 20%, transparent); } }

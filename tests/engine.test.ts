@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import * as git from './fixtures/git'
-import { apply, checked, current, dashboard, initial, press, replay, screen, snapshot, taught, withProject, level } from '../hooks/engine/engine'
+import { apply, checked, current, dashboard, initial, lookBack, press, replay, screen, snapshot, taught, withProject, level } from '../hooks/engine/engine'
 import type { Ctx, Out } from '../hooks/engine/engine'
 import { skillState } from '../hooks/engine/mastery'
 import { stats } from '../hooks/engine/stats'
@@ -52,6 +52,9 @@ test('intake, setup and curriculum take one click each, then the first step and 
   expect(screen(l.c).actions.map(a => a.id)).toEqual(['setup'])
   expect(l.go({ action: 'continue' }).events).toEqual([])
   expect(l.go({ action: 'setup' }).effects).toEqual([{ kind: 'setup' }])
+  // Nothing to wait for here: the learner clicks Install everything
+  l.take({ events: [{ ts: l.c.now, type: 'setup', req: git.course.setup[0]!.id, status: 'missing' }], effects: [] })
+  expect(screen(l.c).result).toEqual({ tone: 'info', text: 'Teach Me installs and sets up what is missing for you.' })
   l.take({ events: git.course.setup.map(r => ({ ts: l.c.now, type: 'setup' as const, req: r.id, status: 'ok' as const })), effects: [] })
   expect(screen(l.c).actions.map(a => a.id)).toEqual(['continue'])
   l.go({ action: 'continue' })
@@ -103,7 +106,7 @@ test('failing the same idea twice gives a new angle, at most two drills, then th
   const third = l.take(checked(l.c, 'b3', onMain))
   expect(third.events[0]).not.toHaveProperty('branch')
   expect(third.effects).toEqual([])
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'hint', 'skip', 'ask', 'explore'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'hint', 'skip', 'prev', 'ask', 'explore'])
   l.go({ action: 'skip' })
   expect(l.step()).toBe('b4')
   expect(l.c.state.weak['branch-not-switch']).toMatchObject({ count: 3, status: 'open' })
@@ -185,11 +188,11 @@ test('hints wait for a real attempt, an anticipated miss branches to a drill and
   l.go({ action: 'next' }); l.go({ choose: 2 }); l.go({ action: 'next' })
   expect(l.step()).toBe('b3')
   expect(l.go({ action: 'hint' }).events).toEqual([])
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'ask', 'explore'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'prev', 'ask', 'explore'])
   expect(l.go({ action: 'check' }).effects).toEqual([{ kind: 'check', step: 'b3' }])
   l.take(checked(l.c, 'b3', [{ id: 'exists', ok: true, got: 'abc' }, { id: 'on-branch', ok: false, got: 'main' }]))
   expect(screen(l.c).result?.text).toMatch(/still on main/)
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'next', 'hint', 'ask', 'explore'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['check', 'next', 'hint', 'prev', 'ask', 'explore'])
   l.go({ action: 'hint' })
   expect(screen(l.c).hint).toEqual({ level: 1, text: 'One command can create a branch and move you onto it.' })
   l.go({ action: 'next' })
@@ -199,7 +202,7 @@ test('hints wait for a real attempt, an anticipated miss branches to a drill and
   expect(l.step()).toBe('b3')
   l.pass()
   expect(screen(l.c).result?.tone).toBe('right')
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['next'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['next', 'prev'])
   l.go({ action: 'next' })
   expect(l.step()).toBe('b4')
   expect(l.c.state.evidence.filter(e => e.step === 'b3').map(e => [e.ok, e.hints])).toEqual([[false, 0], [true, 1]])
@@ -252,10 +255,19 @@ test('a side question keeps the place; the engine answers a press in well under 
   const l = learner()
   l.toLesson()
   l.go({ action: 'ask' })
-  expect(screen(l.c).actions).toEqual([{ id: 'back', label: 'Back to step', primary: true, key: 'b' }])
+  expect(screen(l.c).actions.map(a => `${a.id}:${a.label}`)).toEqual(['back:Hide the explanation', 'next:Next', 'explore:Explore'])
   l.go({ action: 'back' })
   expect(l.step()).toBe('b1')
   expect(screen(l.c).actions[0]?.id).toBe('next')
+  // On a question the explanation opens under it: the choices stay, and an answer closes the explanation (#lost-exam)
+  l.go({ action: 'next' })
+  const question = screen(l.c)
+  l.go({ action: 'ask' })
+  expect(screen(l.c)).toMatchObject({ kind: 'question', choices: question.choices, result: { tone: 'info' } })
+  l.go({ choose: 1 })
+  expect(l.c.state.aside).toBe(false)
+  expect(screen(l.c).result?.tone).not.toBe('info')
+  l.go({ action: 'back' })
 
   const n = 2000
   const t0 = performance.now()
@@ -291,9 +303,17 @@ test('progress is read from the answers: accuracy, first try, time, the curve, s
   expect(st.medianSecs).toBeGreaterThan(0)
   expect(st.weaknesses).toEqual([{ text: expect.stringMatching(/^The idea that /), detail: '1× wrong · fixed once, re-checked later' }])
   const sc = screen({ ...l.c, progress: true })
-  expect(sc).toMatchObject({ kind: 'progress', title: 'Your progress', chart: { points: [0, 0.5] }, actions: [{ id: 'back' }] })
+  expect(sc).toMatchObject({ kind: 'progress', title: 'Your progress', actions: [{ id: 'back' }] })
   expect(sc.tiles?.slice(0, 3)).toEqual([{ label: 'right', value: '50%' }, { label: 'right first try', value: '50%' }, { label: 'answers', value: '2' }])
-  expect(sc.groups?.map(g => g.title)).toEqual(['Strengths', 'To work on', 'Skills'])
+  // Two points would draw a steep fall; the curve waits for five answers
+  expect(sc.chart).toBeUndefined()
+  expect(sc.groups?.map(g => g.title)).toEqual(['Learning curve', 'Strengths', 'To work on', 'Skills'])
+  expect(sc.groups?.[0]?.lines).toEqual([{ mark: 'todo', text: 'Your curve appears after 5 answers' }])
+  // A skill being learned has its own half mark, and counts half in the bar while the label stays whole
+  const learning = git.course.skills.filter(k => skillState(l.c.state, k.id, l.c.now) === 'learning')
+  expect(learning.length).toBeGreaterThan(0)
+  expect(sc.groups?.[3]?.lines.filter(x => x.mark === 'half').map(x => x.text)).toEqual(learning.map(k => k.title))
+  expect(sc.progress).toEqual({ label: `0 of ${git.course.skills.length} skills · ${learning.length} learning`, done: learning.length / 2, total: git.course.skills.length })
   expect(screen({ ...learner().c, progress: true }).body).toMatch(/^No answers yet/)
 })
 
@@ -344,18 +364,87 @@ test('#18 a lesson whose segment is missing says why and offers Write it now, wh
   expect(press(l.c, { action: 'retry' }).effects).toEqual([])
 })
 
+test('Path lists the lessons of the section under way, the current one with its step, and Continue returns to it', () => {
+  const l = learner()
+  l.toLesson()
+  l.go({ action: 'next' })
+  const at = l.step()
+  l.go({ action: 'curriculum' })
+  const lines = screen(l.c).lines!
+  const phase = git.course.phases.find(p => p.segments.includes('branches-1'))!
+  expect(lines.filter(x => !x.sub)).toHaveLength(git.course.phases.length)
+  expect(lines.filter(x => x.sub)).toHaveLength(phase.segments.length)
+  expect(lines.find(x => x.sub && x.mark === 'now')).toMatchObject({ text: git.branches1.title, detail: `2 of ${git.branches1.steps.filter(x => !x.drill).length} steps` })
+  l.go({ action: 'start' })
+  expect(l.step()).toBe(at)
+})
+
+test('Previous looks back at earlier steps read-only, answers marked, never past where the learner is; Back returns', () => {
+  const l = learner()
+  l.toLesson()
+  const q = git.branches1.steps[1]!
+  l.go({ action: 'next' })
+  l.go({ choose: q.key![0]! + 1 })
+  l.go({ action: 'next' })
+  const at = l.step()
+  const kept = JSON.stringify(l.c.state)
+  const out = l.go({ action: 'prev' })
+  expect(out.effects).toEqual([{ kind: 'peek', seg: 'branches-1', step: 1 }])
+  l.c.peek = { seg: 'branches-1', step: 1 }
+  const sc = screen(l.c)
+  expect(sc.progress?.label).toMatch(/· 2 of \d+ · looking back$/)
+  expect(sc.choices?.find(ch => ch.n === q.key![0]! + 1)?.mark).toBe('right')
+  expect(sc.actions.map(a => `${a.id}:${a.label}`)).toEqual([`back:Back to ${current(l.c)!.step.title}`, 'prev:Previous step'])
+  // Next step stops before the step under way: that one is Back
+  expect(lookBack(l.c, 'branches-1', 1, 1)).toBeUndefined()
+  expect(lookBack(l.c, 'branches-1', 1, -1)).toBe(0)
+  expect(JSON.stringify(l.c.state)).toBe(kept)
+  l.c.peek = undefined
+  expect(l.step()).toBe(at)
+})
+
+test('Path opens a finished lesson read-only from its first step; Back goes to the path', () => {
+  const l = learner()
+  l.toLesson()
+  l.take({ events: [{ ts: l.c.now, type: 'stage', stage: 'recap' }, { ts: l.c.now, type: 'stage', stage: 'curriculum' }], effects: [] })
+  const line = screen(l.c).lines!.find(x => x.sub && x.text === git.branches1.title)!
+  expect(line).toMatchObject({ mark: 'ok', action: 'open:branches-1' })
+  expect(l.go({ action: line.action! }).effects).toEqual([{ kind: 'peek', seg: 'branches-1', step: 0 }])
+  l.c.peek = { seg: 'branches-1', step: 0 }
+  expect(screen(l.c).actions.map(a => `${a.id}:${a.label}`)).toEqual(['back:Back to your path', 'peek-next:Next step'])
+  expect(lookBack(l.c, 'branches-1', 0, 1)).toBe(1)
+  // Only a finished lesson opens; one not written yet does nothing
+  expect(l.go({ action: 'open:merge-1' }).effects).toEqual([])
+})
+
+test('Path lists every reading written here, each one tap from opening; studied lessons and readings stay reachable', () => {
+  const l = learner()
+  l.toLesson()
+  l.c.readings = Array.from({ length: 10 }, (_, i) => ({ id: `r${i}`, topic: `Topic ${i}`, read: i % 3, total: 2 }))
+  l.go({ action: 'curriculum' })
+  const g = screen(l.c).groups!.find(x => x.title === 'Your readings')!
+  expect(g.lines).toHaveLength(10)
+  expect(g.lines.slice(0, 3).map(x => `${x.mark}:${x.detail}`)).toEqual(['todo:0 of 2 sections read', 'half:1 of 2 sections read', 'ok:2 of 2 sections read'])
+  expect(l.go({ action: g.lines[9]!.action! }).effects).toEqual([{ kind: 'explore', topic: 'Topic 9' }])
+  expect(l.go({ action: 'read:nope' }).effects).toEqual([])
+})
+
 test('the dashboard path: lessons done, the current one with its step, the next one being written or failed', () => {
   const l = learner()
   l.toLesson()
   const steps = git.branches1.steps.filter(x => !x.drill).length
   expect(dashboard(l.c)).toEqual({
     title: git.course.subject, goal: git.course.goal,
-    overall: { label: '0 of 2 lessons', done: 0, total: 2 },
+    overall: { label: `Lesson 1 of 2 · 1 of ${steps} steps`, done: 0, total: 2 },
     phases: [
-      { id: 'branches', title: 'Branches', mark: 'now', done: 0, total: 1, lessons: [{ title: 'Branches', status: 'now', steps: `1 of ${steps} steps` }] },
-      { id: 'merging', title: 'Merging', mark: 'todo', done: 0, total: 1, lessons: [{ title: 'Not written yet', status: 'todo' }] },
+      { id: 'branches', title: 'Branches', mark: 'now', done: 0, total: 1, lessons: [{ id: 'branches-1', title: 'Branches', status: 'now', steps: `1 of ${steps} steps` }] },
+      { id: 'merging', title: 'Merging', mark: 'todo', done: 0, total: 1, lessons: [{ id: git.course.phases[1]!.segments[0], title: 'Not written yet', status: 'todo' }] },
     ],
   })
+  // Steps into the lesson move its phase bar and the overall share before the lesson is done
+  l.go({ action: 'next' })
+  expect(dashboard(l.c)?.overall).toEqual({ label: `Lesson 1 of 2 · 2 of ${steps} steps`, done: 1 / steps, total: 2 })
+  expect(dashboard(l.c)?.phases.map(p => [p.done, p.progress])).toEqual([[0, 1 / steps], [0, undefined]])
   l.take({ events: [{ ts: l.c.now, type: 'stage', stage: 'recap' }], effects: [] })
   l.c.preparing = true
   expect(dashboard(l.c)?.phases.map(p => [p.mark, p.lessons[0]!.status])).toEqual([['ok', 'done'], ['now', 'writing']])
@@ -415,7 +504,7 @@ test('"I don\'t know" teaches the idea, brings the skill back, and is neither ri
   expect(sc.result?.tone).toBe('info')
   expect(sc.result?.text).toContain(step.more ?? git.branches1.steps[0]!.body)
   expect(sc.choices?.every(c => !c.mark)).toBe(true)
-  expect(sc.actions.map(a => a.id)).toEqual(['next', 'ask', 'explore'])
+  expect(sc.actions.map(a => a.id)).toEqual(['next', 'prev', 'ask', 'explore'])
   expect(l.c.state).toMatchObject({ evidence: [], mistakes: [], weak: { [`skill:${step.skill}`]: { cls: 'prereq', status: 'open' } } })
   expect(stats(git.course, l.c.state, l.c.now).skills.find(k => k.id === step.skill)?.idk).toBe(1)
   expect(snapshot(l.c)).toMatch(/do not know this one/)
@@ -461,7 +550,7 @@ test('a segment ends with one more go at what is still open in it, then goes str
   l.c.state = { ...l.c.state, solved: { ...l.c.state.solved, [git.branches1.steps[last]!.id]: true } }
   l.go({ action: 'next' })
   expect(screen(l.c).progress?.label).toMatch(/^Before you move on · 1 of/)
-  expect(screen(l.c).actions.map(a => a.id)).toEqual(['skip'])
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['skip', 'explore'])
   l.go({ action: 'skip' })
   expect(l.c.state.stage).toBe('recap')
   expect(l.c.state.gated).toEqual({ 'branches-1': true })
@@ -517,4 +606,45 @@ test('a reading for Explore: 3 to 12 sections, each with a source, short enough 
   expect(validateReading(r([sec({ sources: [{ title: 'Docs', url: 'http://example.com' }] }), sec(), sec()])).join(' ')).toMatch(/https url/)
   expect(validateReading(r([sec({ code: { lang: 'python', source: 'print(1)' } }), sec(), sec()])).join(' ')).toMatch(/a python example needs run/)
   expect(validateReading(r([sec({ code: { lang: 'rust', source: 'fn main() {}' } }), sec(), sec()]))).toEqual([])
+})
+
+test('placement: a learner who knows some of it answers quick questions, graded on the spot; lesson 1 starts at the first miss', () => {
+  const pq = (id: string, skill: string) => ({ id, kind: 'mcq' as const, skill, difficulty: 1 as const, title: id, body: `Question ${id}`, choices: [{ text: 'right', why: 'yes' }, { text: 'wrong', why: 'no' }], key: [0] })
+  const course = { ...git.course, placement: [pq('pl1', 'branch-model'), pq('pl2', 'branch-switch'), pq('pl3', 'branch-commit')] }
+  const start = (know: number) => {
+    const l = learner()
+    l.c.course = course
+    l.take({ events: [{ ts: l.c.now, type: 'course', course: 'git' }], effects: [] })
+    l.go({ choose: 1 }); l.go({ choose: know }); l.go({ choose: 1 })
+    return l
+  }
+  // "Nothing yet": no check, straight to the setup and lesson 1
+  const fresh = start(1)
+  expect(fresh.c.state.stage).toBe('setup')
+  expect(fresh.effects).toEqual([{ kind: 'setup' }])
+
+  const l = start(3)
+  expect(l.c.state.stage).toBe('placement')
+  expect(l.effects).toEqual([])
+  expect(screen(l.c)).toMatchObject({ kind: 'question', progress: { label: 'Where to start · 1 of 3' }, body: expect.stringMatching(/Nothing is graded[\s\S]*Question pl1/) })
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['dontknow', 'skipcheck'])
+  l.go({ choose: 1 })
+  l.go({ action: 'dontknow' })
+  l.go({ choose: 2 })
+  expect(l.log.filter(e => e.type === 'placed')).toMatchObject([{ step: 'pl1', ok: true }, { step: 'pl2', ok: false }, { step: 'pl3', ok: false }])
+  expect(screen(l.c)).toMatchObject({ body: 'Your lessons start at **Create and switch**.', lines: [
+    { mark: 'ok', text: 'What a branch is', detail: 'You know this' }, { mark: 'now', text: 'Create and switch', detail: 'Lessons start here' }, { mark: 'todo', text: 'Commit on a branch' },
+  ] })
+  expect(snapshot(l.c)).toMatch(/Placement check: knew What a branch is; missed Create and switch, Commit on a branch\./)
+  // Placement never counts as practice: no evidence, no review cards
+  expect([l.c.state.evidence.length, Object.keys(l.c.state.cards).length]).toEqual([0, 0])
+  l.go({ action: 'continue' })
+  expect(l.c.state.stage).toBe('setup')
+  expect(l.effects[0]).toEqual({ kind: 'setup' })
+
+  // Skip the check: on to the setup, with no results to report
+  const skip = start(2)
+  skip.go({ action: 'skipcheck' })
+  expect(skip.c.state.stage).toBe('setup')
+  expect(snapshot(skip.c)).not.toMatch(/Placement check/)
 })
