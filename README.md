@@ -4,7 +4,7 @@ Learn any technical skill with Claude Code as your teacher, in your own editor a
 
 An AI tutor plugin for [Claude Code](https://claude.com/claude-code). It writes a course on any programming language, tool or codebase for you, gives you hands-on exercises checked by tests on your machine, and uses spaced repetition so mistakes don't come back. Works in VS Code or the terminal.
 
-![Teach Me Anything lesson in VS Code: a wrong answer, why it is wrong, and a drill to fix it](docs/lesson.png)
+<img src="docs/lesson.png" width="520" alt="Teach Me Anything lesson in VS Code: a wrong answer, why it is wrong, and a drill to fix it">
 
 ## Quick start
 
