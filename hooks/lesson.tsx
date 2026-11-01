@@ -145,12 +145,11 @@ async function refresh($: EngineInterface, layout?: LayoutOp) {
 
 // Where the learner is, in one file kept up to date, so the chat carries a pointer and not the whole text
 const positionPath = (s: Session) => `${s.root}/${DIR}/position.md`
-const POSITION_HEAD = '<!-- Teach Me: what the learner sees in the lesson view right now. The engine rewrites this file on every change; read it before answering about the lesson, never edit it. -->'
 async function writePosition($: EngineInterface, s: Session, c: Ctx) {
   const text = snapshot(c)
   if (text === s.position) return
   s.position = text
-  await $.fs.write(positionPath(s), `${POSITION_HEAD}\n\n${text}\n`).catch(err => $.ui.log(`teachme: position write failed: ${err}`, { to: 'debug' }))
+  await $.fs.write(positionPath(s), `${text}\n`).catch(err => $.ui.log(`teachme: position write failed: ${err}`, { to: 'debug' }))
 }
 
 async function commit($: EngineInterface, out: Out) {

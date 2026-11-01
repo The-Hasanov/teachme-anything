@@ -609,7 +609,7 @@ test('#14 Ask sends the step to the agent, and its explanation shows under the s
   expect(sent).toHaveLength(1)
   expect(sent[0]).toMatch(/Explain the idea behind the Teach Me step "Big-O counts growth"[\s\S]*<tchm>\S*\.teachme\/position\.md<\/tchm>/)
   // the chat gets a pointer; the step itself is in the file
-  expect(Object.entries(w.files).find(([k]) => k.endsWith('.teachme/position.md'))?.[1]).toMatch(/^<!-- Teach Me: what the learner sees in the lesson view right now[\s\S]*At: .*Big-O counts growth/)
+  expect(Object.entries(w.files).find(([k]) => k.endsWith('.teachme/position.md'))?.[1]).toMatch(/At: .*Big-O counts growth/)
   expect(await texts()).toMatch(/Explaining this step…/)
   // The agent's turn: its prompt is the one sent, framed by the engine
   await $.turn.start({ text: `The teachme-anything plugin sent a message:\n${sent[0]}`, turnId: 'q1' } as never)
