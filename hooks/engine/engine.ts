@@ -331,9 +331,23 @@ function hint(c: Ctx, at: At): Out {
   return { events: [{ ts: c.now, type: 'hint', step: step.id, level }], effects: [] }
 }
 
+// A review only asks what a lesson put in front of the learner: a step they answered, or a main step of a lesson
+// they went through. Never a drill they did not need, nor anything only in an Explore reading
+function wasTaught(c: Ctx, g: Segment, i: number, x: Step): boolean {
+  const s = c.state
+  const key = stepKey(g.id, x.id)
+  if (s.idk[key] !== undefined || Object.keys(s.result).some(k => k.replace(/^warm\d+:/, '') === key)) return true
+  if (x.drill || !c.course) return false
+  const order = segmentOrder(c.course)
+  const at = s.pos?.back ?? s.pos
+  const now = s.done ? order.indexOf(s.done) + 1 : at ? order.indexOf(at.seg) : 0
+  const here = order.indexOf(g.id)
+  return here >= 0 && (here < now || (here === now && !s.done && !!at && at.seg === g.id && i < at.step))
+}
+
 export function dueItems(c: Ctx): WarmItem[] {
   const s = c.state
-  const questions = Object.values(c.segments).flatMap(g => g.steps.map((x, i) => ({ g, x, i }))).filter(({ x }) => x.choices && x.key)
+  const questions = Object.values(c.segments).flatMap(g => g.steps.map((x, i) => ({ g, x, i }))).filter(({ x, g, i }) => x.choices && x.key && wasTaught(c, g, i, x))
   const pick = (key: string, match: (x: Step) => boolean, avoid: string[]): WarmItem | undefined => {
     const all = questions.filter(q => match(q.x))
     const best = all.find(q => !s.result[stepKey(q.g.id, q.x.id)] && !avoid.includes(q.x.id)) ?? all.find(q => !avoid.includes(q.x.id)) ?? all[0]

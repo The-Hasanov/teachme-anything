@@ -1111,3 +1111,48 @@ test('a lock left by a session that crashed is stale: no warning, and it never b
   expect(toasts).toEqual([])
   expect(JSON.parse(w.files[`${ROOT}/.teachme/session.lock`]!).id).toBe('s-new')
 })
+
+test('Explore reopens a reading read before on its contents: the learner picks the section, nothing new counted as read', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  const files = w.files
+  files[`${ROOT}/.teachme/read/rust-ownership.json`] = JSON.stringify(reading)
+  files[`${ROOT}/.teachme/log/dold-2026-10.jsonl`] = JSON.stringify({ ts: Date.parse('2026-10-26T10:00:00Z'), type: 'read', reading: 'rust-ownership', section: 0 }) + '\n'
+  agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await seed($, files, python)
+  await $.tool.call({ tool: 'mcp__teachme-anything__explore', topic: 'Rust ownership' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await shown(ui)).toMatch(/3 sections\. Open any of them\./)
+  const logged = () => Object.entries(files).filter(([f]) => f.includes('/.teachme/log/') && !f.includes('dold')).map(([, t]) => t).join('')
+  expect(logged()).not.toMatch(/"type":"read"/)
+  // Choosing a section is what opens it, and counts it
+  await ui.press({ key: 'choose-2' })
+  expect(await shown(ui)).toMatch(/Section 2 of 3/)
+  expect(logged()).toMatch(/"type":"read","reading":"rust-ownership","section":1/)
+  await ui.unmount()
+})
+
+test('the agent opens a page to show the learner: a reading\'s contents, a lesson they reached, the path, their progress', async ($, on) => {
+  const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
+  w.files[`${ROOT}/.teachme/read/rust-ownership.json`] = JSON.stringify(reading)
+  agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await seed($, w.files, python)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  for (const key of ['choose-1', 'choose-1', 'choose-1', 'act-continue', 'act-start']) await ui.press({ key })
+  const open = async (page: string, name?: string) => JSON.parse(String((await $.tool.call({ tool: 'mcp__teachme-anything__open', page, ...(name ? { name } : {}) } as never) as { result: unknown }).result))
+  // "show me the materials on ownership": the reading's contents, nothing counted as read
+  expect(await open('reading', 'ownership')).toMatchObject({ ok: true })
+  expect(await shown(ui)).toMatch(/3 sections\. Open any of them\./)
+  expect(Object.entries(w.files).filter(([f]) => f.includes('/.teachme/log/')).map(([, t]) => t).join('')).not.toMatch(/"type":"read"/)
+  expect(await open('path')).toMatchObject({ ok: true })
+  expect(await shown(ui)).toMatch(/Your path to:/)
+  expect(await open('lesson', 'lists')).toMatchObject({ ok: true })
+  expect(await shown(ui)).toMatch(/Lists and functions/)
+  expect(await open('progress')).toMatchObject({ ok: true })
+  expect(await shown(ui)).toMatch(/Progress|answers/i)
+  // A name that matches nothing says what there is
+  expect((await open('lesson', 'ownership')).error).toMatch(/Reached: Lists and functions/)
+  expect((await open('reading', 'enums')).error).toMatch(/Readings: Rust ownership/)
+  await ui.unmount()
+})
