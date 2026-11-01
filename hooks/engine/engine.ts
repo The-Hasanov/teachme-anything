@@ -251,7 +251,7 @@ function advance(c: Ctx, skipBranch = false): Out {
   const at = current(c)
   if (!at) return NONE
   const { seg, step, index } = at
-  const branch = c.state.result[sk(at)]?.branch
+  const branch = c.state.result[sk(at)]?.branch ?? idkDrill(c, at)
   if (!skipBranch && branch && !c.state.solved[sk(at)]) {
     const [bseg, bid] = branch.includes('/') ? branch.split('/') as [string, string] : [seg.id, branch]
     const target = c.segments[bseg]?.steps.findIndex(x => x.id === bid) ?? -1
@@ -286,6 +286,13 @@ function remedyFor(c: Ctx, at: At, cls: MistakeClass, tag?: string, scripted?: s
     if (i >= 0) return { branch: `${g.id}/${g.steps[i]!.id}`, effects: [] }
   }
   return { effects: tag ? [{ kind: 'remedy', tag, ...(at.step.skill ? { skill: at.step.skill } : {}) }] : [] }
+}
+
+// "I don't know" on a question with a drill for it: the drill comes first ("Practice this"), then the question again
+const idkDrill = (c: Ctx, at: At) => {
+  if (!at.step.choices || c.state.idk[sk(at)] === undefined || c.state.result[sk(at)]) return undefined
+  const w = at.step.wrong?.find(x => x.branch)
+  return remedyFor(c, at, 'misconception', at.step.remedy ?? w?.tag, w?.branch).branch
 }
 
 const isSequence = (step: Step) => step.kind === 'reorder' || step.kind === 'trace'
@@ -418,6 +425,7 @@ export function press(c: Ctx, p: Press): Out {
   }
   // A warm-up or the check before the next lesson can be left for the path; Continue there comes back to it
   if (action === 'curriculum' && s.stage === 'lesson' && s.warm?.items.length) return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
+  if (action?.startsWith('redo:') && ['curriculum', 'recap', 'lesson'].includes(s.stage)) return redo(c, action.slice(5))
   if (action?.startsWith('reset') && ['curriculum', 'recap', 'lesson'].includes(s.stage)) return reset(c, action.split(':')[1], action.split(':')[2] === 'fresh')
   if (s.stage === 'curriculum' || s.stage === 'recap') {
     if (action === 'start') {
@@ -471,7 +479,7 @@ export function press(c: Ctx, p: Press): Out {
   if (action === 'hint') return hint(c, at)
   if (action === 'check' && step.check && !c.busy && c.state.result[sk(at)]?.tone !== 'wait') return { events: [], effects: [{ kind: 'check', step: step.id }] }
   if (action === 'next' && canLeave(c, at)) return advance(c)
-  if (action === 'skip' && canSkip(c, at)) {
+  if (action === 'skip' && (canSkip(c, at) || !!idkDrill(c, at))) {
     const go = advance(c, true)
     return { events: [{ ts: c.now, type: 'skip', step: step.id }, ...go.events], effects: go.effects }
   }
@@ -491,6 +499,18 @@ function resume(c: Ctx): Out | undefined {
 }
 
 const missingSegment = (c: Ctx) => { const seg = c.state.pos?.seg; return seg && !c.segments[seg] ? seg : undefined }
+// Redo one finished lesson: its answers, hints and drafts are cleared and it starts again at step 1, practice rebuilt
+// (the old folder kept aside). Skill history, evidence and every other lesson stay; then the path goes on in order
+function redo(c: Ctx, seg: string): Out {
+  const status = dashboard(c)?.phases.flatMap(p => p.lessons).find(l => l.id === seg)?.status
+  if (status !== 'done' || !c.segments[seg]) return NONE
+  const go = enter(c, seg, 0)
+  return {
+    events: [{ ts: c.now, type: 'reset', segs: [seg], steps: [], skills: [], rewind: false }, { ts: c.now, type: 'stage', stage: 'lesson' }, ...go.events],
+    effects: [{ kind: 'restart', segs: [seg] }, ...go.effects.filter(e => e.kind !== 'practice')],
+  }
+}
+
 function reset(c: Ctx, phaseId?: string, fresh = false): Out {
   const course = c.course!
   const phases = phaseId ? course.phases.filter(p => p.id === phaseId) : course.phases
@@ -698,7 +718,9 @@ export function screen(c: Ctx): Screen {
         ...(result ? { result } : {}),
         actions: res
           ? [act('next', res.branch ? 'Practice this' : 'Next', true, 'enter'), ask, EXPLORE]
-          : [...edit, unsure ? act('next', 'Move on for now', false, 's') : act('dontknow', "I don't know", false, 'd'), ask, EXPLORE],
+          : unsure && idkDrill(c, at)
+            ? [act('next', 'Practice this', true, 'enter'), act('skip', 'Move on for now', false, 's'), ask, EXPLORE]
+            : [...edit, unsure ? act('next', 'Move on for now', false, 's') : act('dontknow', "I don't know", false, 'd'), ask, EXPLORE],
       }
     }
     if (step.check) {
@@ -866,6 +888,7 @@ function peekScreen(c: Ctx, p: { seg: string; step: number }): Screen | undefine
       act('back', at ? `Back to ${at.step.title}` : backTo(s, 'Back'), true, 'b'),
       ...(prev !== undefined ? [act('prev', 'Previous step', false, 'left')] : []),
       ...(next !== undefined ? [act('peek-next', 'Next step', false, 'n')] : []),
+      ...(dashboard(c)?.phases.flatMap(x => x.lessons).find(l => l.id === seg.id)?.status === 'done' ? [act(`redo:${seg.id}`, 'Redo this lesson', false, 'r')] : []),
     ],
   }
 }

@@ -9,13 +9,13 @@ import { replay } from './engine/engine'
 import type { Build, Course, Effect, Explore, LogEvent, Line, Phase, Press, ProjectPick, Reading, Requirement, Screen, Segment } from './engine/types'
 import { skillState } from './engine/mastery'
 import { migrate } from './engine/migrate'
-import { milestoneErrors, replanErrors, untaught, validateCourse, validateProjectPhase, validateReading, validateSegment } from './engine/schema'
+import { milestoneErrors, replanErrors, unclear, unclearReading, untaught, validateCourse, validateProjectPhase, validateReading, validateSegment } from './engine/schema'
 import { MANUAL, backUpScaffold, installPlan, isStaleScaffold, isTool, output, probeEnv, removeLesson, runCommand, runProbes, scaffold } from './host/adapters'
 import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
 import { DIR, append, hasCourse, ignoreLocal, install, load, newLog, progressMarkdown, writeGuide } from './host/store'
 import type { Log } from './host/store'
-import { AUTHOR_MODEL, AUTHOR_PROMPT, DOCTOR_PROMPT, GENERIC_INTAKE, SETUP_ADAPTERS, authorTask, courseTask, diagnose, projectTask, readingTask } from './host/teacher'
+import { AUTHOR_MODEL, AUTHOR_PROMPT, DOCTOR_PROMPT, GENERIC_INTAKE, PLAIN_ENGLISH, SETUP_ADAPTERS, authorTask, courseTask, diagnose, projectTask, readingTask } from './host/teacher'
 import { verifySegment } from './host/verify'
 import { newVsCode, sendView, tick } from './host/vscode'
 import type { LayoutOp, VsCode } from './host/vscode'
@@ -190,7 +190,8 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
     if (action === 'back') { s.peek = undefined; return refresh($) }
     const i = action === 'prev' || action === 'peek-next' ? lookBack(await ctx($), s.peek.seg, s.peek.step, action === 'prev' ? -1 : 1) : undefined
     if (i !== undefined) { s.peek = { ...s.peek, step: i }; await refresh($) }
-    if (!action?.startsWith('open:')) return
+    if (action?.startsWith('redo:')) s.peek = undefined
+    else if (!action?.startsWith('open:')) return
   }
   if (s.welcome && 'action' in p && (p.action === 'continue' || p.action === 'curriculum')) {
     const out = press(await ctx($), p)
@@ -500,7 +501,7 @@ async function submitSegment($: EngineInterface, input: { segment: unknown; newS
   const course: Course = input.phases === undefined || replan.length ? known : { ...known, phases: input.phases as Phase[] }
   const errors = [...replan, ...validateSegment(seg, course)]
   const project = course.phases.find(p => p.project && p.segments.includes(seg?.id))
-  if (!errors.length) errors.push(...untaught(seg, Object.values(s.segments)), ...(project ? milestoneErrors(seg, project, Object.values(s.segments)) : []))
+  if (!errors.length) errors.push(...untaught(seg, Object.values(s.segments)), ...unclear(seg), ...(project ? milestoneErrors(seg, project, Object.values(s.segments)) : []))
   // A rejection is kept, so a failed attempt says why instead of failing silently
   const reject = (errs: string[]) => {
     s.prepError = errs[0]
@@ -727,7 +728,8 @@ async function submitReading($: EngineInterface, input: { reading: unknown }) {
   const s = sess
   if (!s) return { ok: false, errors: ['no Teach Me session in this folder'] }
   const r = input.reading as Reading
-  const errors = validateReading(r)
+  const valid = validateReading(r)
+  const errors = valid.length ? valid : unclearReading(r)
   if (errors.length) return { ok: false, errors }
   const examples: Segment = {
     format: 'teachme.script/1', id: r.id, title: r.topic, skills: [],
@@ -1064,7 +1066,7 @@ export function lessonSection() {
   return {
     id: `${PLUGIN}:lesson`, scope: 'session' as const,
     text: 'Teach Me course in this folder. The lesson view (engine) runs every step, answer and hint; never repeat its content. ' +
-      'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists. ' +
+      'Answer the learner\'s own question in at most 3 short sentences, no headings or lists. ' + PLAIN_ENGLISH + ' ' +
       'What they see in the lesson view right now (the step, its code and choices, what they answered, or the reading or screen they have open) is in .teachme/position.md, rewritten by the engine on every change: read it before answering anything about the lesson. ' +
       `${POINTER} at the end of a message is Teach Me, not the learner: it means that file changed since their last message. ` +
       'What each file in .teachme/ is: .teachme/CLAUDE.md. ' +

@@ -572,7 +572,7 @@ test('build with me: pick a suggested project, it is planned into the course, an
 
   const submit = async (phase: unknown, segment: unknown) => JSON.parse((await $.tool.call({ tool: 'mcp__teachme-anything__submit_project', phase, segment } as never)).result as string)
   const phase = { id: 'todo', title: 'Todo CLI', brief: 'A todo list on the command line', project: 'practice/todo', skills: ['count-steps'], segments: ['todo-1', 'todo-2'] }
-  const task = { id: 't2', kind: 'code', skill: 'count-steps', difficulty: 1, title: 'Write add()', body: 'Make add() keep the item.', open: 'todo.py',
+  const task = { id: 't2', kind: 'code', skill: 'count-steps', difficulty: 1, title: 'Write add()', body: '**Goal:** add() keeps the item.\n\n1. Open todo.py.\n2. Make add() keep the item.\n3. Run the tests.\n\n**Done when:** the tests pass.', open: 'todo.py',
     check: { probes: [{ id: 'tests', argv: ['python', '-m', 'unittest'], expect: { exitCode: 0 } }], reference: [['@write', 'todo.py', 'items = []\ndef add(x):\n    items.append(x)\n']] } }
   const m1 = {
     format: 'teachme.script/1', id: 'todo-1', title: 'Add an item', skills: ['count-steps'],

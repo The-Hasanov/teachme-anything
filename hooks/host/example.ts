@@ -107,7 +107,7 @@ export const lists1: Segment = {
     {
       "id": "p1", "kind": "compare", "skill": "list-basics", "difficulty": 1,
       "title": "A list, by position",
-      "body": "A Python **list** keeps items in order: `nums = [10, 20, 30]`. `nums[0]` is the first item and `nums[-1]` the last. `nums[0:2]` is a **slice**: a new list from index 0 up to, but not including, 2.",
+      "body": "A Python **list** keeps items in order: `nums = [10, 20, 30]`.\n\n- `nums[0]` is the first item.\n- `nums[-1]` is the last item.\n- `nums[0:2]` is a **slice**: a new list from index 0 up to, but not including, 2.",
       "compare": { "with": "JavaScript", "text": "Like a JavaScript array: ordered, indexed from 0, and `append` adds to the end like `push`.", "stops": "JavaScript has no negative indexes: `arr[-1]` is undefined there. In Python it is the last item." }
     },
     {
@@ -145,7 +145,7 @@ export const lists1: Segment = {
     {
       "id": "p3d", "kind": "predict", "skill": "list-sort", "difficulty": 1, "drill": true, "remedy": "sort-returns-list",
       "title": "Sorted in place",
-      "body": "sort() changes the list it is called on and returns None. Here nothing keeps its return value. What does this print?",
+      "body": "`sort()` changes the list it is called on, and returns `None`. Here nothing keeps its return value.\n\nWhat does this print?",
       "code": { "lang": "python", "source": "nums = [3, 1, 2]\nnums.sort()\nprint(nums)", "run": { "file": "p3d.py", "argv": ["python", "p3d.py"], "out": "[1, 2, 3]" } },
       "choices": [
         { "text": "[1, 2, 3]", "why": "Right: the list itself is now sorted." },
@@ -188,7 +188,7 @@ export const lists1: Segment = {
     {
       "id": "p6", "kind": "spot-bug", "skill": "functions", "difficulty": 2,
       "title": "Spot the bug",
-      "body": "Every call should start with an empty basket. But this prints `['tea', 'milk']`. Which line causes it?",
+      "body": "Every call should start with an empty basket. But this prints `['tea', 'milk']`.\n\nWhich line causes it?",
       "code": { "lang": "python", "source": "def add(item, basket=[]):\n    basket.append(item)\n    return basket\n\nadd('tea')\nprint(add('milk'))", "run": { "file": "p6.py", "argv": ["python", "p6.py"], "out": "['tea', 'milk']" } },
       "choices": [
         { "text": "def add(item, basket=[]):", "code": "def add(item, basket=[]):", "why": "Right: the default list is made once, when def runs, and every call shares it." },
@@ -204,7 +204,7 @@ export const lists1: Segment = {
     {
       "id": "p7", "kind": "code", "open": "stats.py", "skill": "list-sort", "difficulty": 2,
       "title": "Your turn: top three",
-      "body": "In **stats.py**, finish `top_three(nums)`: return the three largest numbers, largest first. `nums` must not change.\n\nRun the tests with `python -m unittest test_stats`, or press Check.",
+      "body": "**Goal:** `top_three(nums)` returns the three largest numbers, largest first.\n\n1. Open `stats.py`.\n2. Finish `top_three(nums)`.\n3. Leave `nums` as it was.\n4. Run `python -m unittest test_stats`, or press Check.\n\n**Done when:** all tests say OK.",
       "check": {
         "probes": [
           { "id": "unchanged", "argv": ["python", "-m", "unittest", "-q", "test_stats.TopThree.test_input_unchanged"], "expect": { "exitCode": 0 } },
@@ -220,7 +220,7 @@ export const lists1: Segment = {
     {
       "id": "p8", "kind": "code", "open": "stats.py", "skill": "functions", "difficulty": 3, "unseen": true,
       "title": "On your own: no repeats",
-      "body": "In **stats.py**, finish `dedupe(items)`: return the items without repeats, each in the order it first appears. `dedupe([3, 1, 3, 2, 1])` is `[3, 1, 2]`.\n\nThis one proves the skill: try it before asking.",
+      "body": "**Goal:** `dedupe(items)` returns the items without repeats, in first-seen order.\n\n1. Open `stats.py`.\n2. Finish `dedupe(items)`.\n3. Check: `dedupe([3, 1, 3, 2, 1])` is `[3, 1, 2]`.\n4. Press Check.\n\n**Done when:** Check is green. This one proves the skill: try it before asking.",
       "check": {
         "probes": [
           { "id": "tests", "argv": ["python", "-m", "unittest", "-q", "test_stats.Dedupe"], "expect": { "exitCode": 0 } }
