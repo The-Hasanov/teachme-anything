@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import * as git from './fixtures/git'
-import { apply, checked, current, dashboard, initial, lookBack, press, replay, screen, snapshot, taught, withProject, level } from '../hooks/engine/engine'
+import { apply, checked, current, dashboard, dueItems, initial, lookBack, press, replay, screen, snapshot, taught, withProject, level } from '../hooks/engine/engine'
 import type { Ctx, Out } from '../hooks/engine/engine'
 import { skillState } from '../hooks/engine/mastery'
 import { stats } from '../hooks/engine/stats'
@@ -151,12 +151,12 @@ test('a fixed weakness comes back in the next warm-up and is resolved only by a 
   expect(next.state.pos).toEqual(l.c.state.pos)
   expect(screen(next).body).toMatch(/First, 2 things to keep sharp\./)
   const warm = press(next, { action: 'continue' })
-  expect(warm.events[0]).toMatchObject({ type: 'warm', items: [{ step: 'b3e', key: 'branch-not-switch' }, { step: 'b2d', key: 'skill:branch-model' }] })
+  expect(warm.events[0]).toMatchObject({ type: 'warm', items: [{ step: 'b3d', key: 'branch-not-switch' }, { step: 'b2', key: 'skill:branch-model' }] })
   const run = (p: Press) => { const out = press(next, p); for (const e of out.events) next.state = apply(next.state, e); return out }
   for (const e of warm.events) next.state = apply(next.state, e)
   next.welcome = false
   expect(screen(next).progress?.label).toBe('Warm-up · 1 of 2')
-  expect(run({ choose: 1 }).events[0]).toMatchObject({ verdict: 'right', review: 'branch-not-switch', rk: 'warm1:b3e' })
+  expect(run({ choose: 1 }).events[0]).toMatchObject({ verdict: 'right', review: 'branch-not-switch', rk: 'warm1:b3d' })
   expect(next.state.weak['branch-not-switch']?.status).toBe('resolved')
   run({ action: 'next' })
   expect(screen(next).progress?.label).toBe('Warm-up · 2 of 2')
@@ -681,4 +681,18 @@ test('while Explore is open, the tutor is told the reading, and the unsolved ste
   expect(snap).not.toMatch(/What they see|stepped aside/)
   expect(snap).toMatch(/never the command or answer/)
   expect(snapshot(l.c)).toMatch(/What they see/)
+})
+
+test('a warm-up asks only what a lesson taught: never a drill the learner did not need, nor a step ahead', () => {
+  const l = learner()
+  l.toLesson()
+  l.go({ action: 'next' })
+  expect(current(l.c)!.step.id).toBe('b2')
+  // "I don't know" opens a weak spot on branch-model; its drill b2d and the later b5 were never shown
+  l.go({ action: 'dontknow' })
+  l.c.welcome = true
+  expect(dueItems(l.c).map(i => i.step)).toEqual(['b2'])
+  // Only drills and steps ahead teach this skill: nothing to review yet, rather than something never taught
+  const unseen = { ...l.c, state: { ...l.c.state, idk: {}, result: {} } }
+  expect(dueItems(unseen)).toEqual([])
 })

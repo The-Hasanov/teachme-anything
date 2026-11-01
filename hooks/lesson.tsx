@@ -38,7 +38,7 @@ const curveRows = (points: number[]) => {
 const OUT_ERR = /^(Traceback|\s+File "|\w*(Error|Exception)\b|error[:[]|fatal:|ERROR\b|FAIL\b)/
 const OUT_WARN = /^(warning[:[]|Warning\b|WARN\b|hint:)/i
 const TOOL = (name: string) => `mcp__${PLUGIN}__${name}`
-const OWN_TOOLS = new Set(['start_course', 'snapshot', 'progress', 'submit_segment', 'submit_course', 'build_with_me', 'submit_project', 'explore', 'submit_reading'].map(TOOL))
+const OWN_TOOLS = new Set(['start_course', 'snapshot', 'progress', 'submit_segment', 'submit_course', 'build_with_me', 'submit_project', 'explore', 'submit_reading', 'open'].map(TOOL))
 
 const view = atom({ plugin: 'teachme-anything', key: 'screen' } as const, null, { shape: 'screen-1' })
 
@@ -610,6 +610,36 @@ async function openExplore($: EngineInterface, topic?: string) {
   return { ok: true, next: 'The lesson view shows the reading. Say one short line; nothing else to do.' }
 }
 
+// The agent opens a page of the lesson view for the learner: a lesson they reached, a reading's contents, the path or progress
+async function openPage($: EngineInterface, input: { page?: string; name?: string }) {
+  const s = sess
+  if (!s?.course) return { error: 'No Teach Me course in this folder.' }
+  const q = (input.name ?? '').trim().toLowerCase()
+  const hit = (title: string, id: string) => !!q && (title.toLowerCase().includes(q) || id === q)
+  const shown = async () => { await $.ui.open({ id: PANE, title: s.course!.subject }); await refresh($); return { ok: true, next: 'The lesson view shows it. Say one short line; nothing else to do.' } }
+  s.peek = undefined
+  s.progress = input.page === 'progress'
+  if (input.page === 'progress') { s.explore = undefined; return shown() }
+  if (input.page === 'path') { s.explore = undefined; await commit($, press(await ctx($), { action: 'curriculum' })); return shown() }
+  if (input.page === 'lesson') {
+    const reached = dashboard(await ctx($))?.phases.flatMap(p => p.lessons).filter(l => l.status === 'done' || l.status === 'now') ?? []
+    const l = reached.find(x => hit(x.title, x.id))
+    if (!l) return { error: `No lesson they reached matches "${input.name ?? ''}". Reached: ${reached.map(x => x.title).join(', ') || 'none yet'}.` }
+    s.explore = undefined
+    await commit($, press(await ctx($), { action: `open:${l.id}` }))
+    return shown()
+  }
+  if (input.page === 'reading') {
+    const all = await readings($, s)
+    const r = Object.values(all).find(x => hit(x.topic, x.id))
+    if (!r) return { error: `No reading matches "${input.name ?? ''}". Readings: ${Object.values(all).map(x => x.topic).join(', ') || 'none yet'}. To write one, call explore with the topic.` }
+    // Its contents, with what they read marked: they pick the section, so nothing counts as read until they open it
+    s.explore = { ...(s.explore ?? exploreHome(s, all)), reading: r, section: Math.max(0, ...(s.state.read[r.id] ?? [])), contents: true, writing: undefined, note: undefined }
+    return shown()
+  }
+  return { error: 'page is one of: lesson, reading, path, progress.' }
+}
+
 async function showSection($: EngineInterface, r: Reading, section: number) {
   const s = sess!
   s.explore = { ...s.explore!, reading: r, section, contents: false, writing: undefined, note: undefined }
@@ -619,15 +649,19 @@ async function showSection($: EngineInterface, r: Reading, section: number) {
 
 const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
 
-// An existing reading opens at its first unread section; a new topic is written first (one at a time)
+// An existing reading reopens where it was left in this session; one read before opens on its contents, so the
+// learner picks the section (never dropped into new material and counted as read); a new topic is written first
 async function showTopic($: EngineInterface, topic: string, deeper?: { reading: string; section: string }) {
   const s = sess!
   const all = await readings($, s)
   const found = Object.values(all).find(r => r.topic.toLowerCase() === topic.toLowerCase() || r.id === slug(topic))
   if (found && !deeper) {
-    const seen = new Set(s.state.read[found.id] ?? [])
-    const next = found.sections.findIndex((_, i) => !seen.has(i))
-    return showSection($, found, s.lastSection?.[found.id] ?? (next < 0 ? 0 : next))
+    const left = s.lastSection?.[found.id]
+    if (left !== undefined) return showSection($, found, left)
+    const seen = s.state.read[found.id] ?? []
+    if (!seen.length) return showSection($, found, 0)
+    s.explore = { ...s.explore!, reading: found, section: Math.max(...seen), contents: true, writing: undefined, note: undefined }
+    return refresh($)
   }
   if (s.writer) {
     s.explore = { ...s.explore!, note: `"${s.writer.topic}" is being written. It opens when it is ready; then ask for the next one.` }
@@ -884,6 +918,18 @@ export async function lessonRegister($: EngineInterface) {
     inputSchema: { type: 'object', properties: { topic: { type: 'string', description: 'The topic, as the learner said it. Leave it out to open the list of topics.' } } },
   })
   await $.tool.register({
+    name: 'open', isDeferred: false,
+    description: 'Teach Me: open a page of the lesson view, whenever you want to show the learner something in their course or they ask to open or see it ("open the ownership lesson", "show me the materials on ownership", "show my path"). page lesson: a lesson they reached, read-only; reading: an Explore reading\'s contents, so they pick the section; path; progress.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page: { type: 'string', enum: ['lesson', 'reading', 'path', 'progress'] },
+        name: { type: 'string', description: 'For lesson or reading: part of its title, e.g. "ownership"' },
+      },
+      required: ['page'],
+    },
+  })
+  await $.tool.register({
     name: 'submit_reading',
     description: 'Teach Me author: submit a reading for Explore (teachme.read/1). It is validated, its examples are run and its sources checked before it is kept. Returns {ok} or {errors}.',
     inputSchema: { type: 'object', properties: { reading: { type: 'object' } }, required: ['reading'] },
@@ -1018,6 +1064,8 @@ export function lessonSection() {
       '<tchm>path</tchm> at the end of a message is Teach Me, not the learner: it means that file changed since their last message. ' +
       'End by pointing them back to the step in the lesson view. ' +
       'When they want to study a topic in depth or freely, call explore with it instead of explaining at length. ' +
+      'Explore readings are optional and never count as taught: when a step needs something no lesson taught them, explain the idea in the chat (never the answer); never send them to a reading for it, and never call a reading a lesson. ' +
+      'Whenever you would show them something in the course (a lesson they reached, a reading\'s contents, their path or progress), and whenever they ask to open or see one, call open: the lesson view shows it, instead of you describing it. ' +
       'Never edit .teachme/ or practice/.',
   }
 }
@@ -1060,6 +1108,7 @@ export const registerLesson: Register = on => {
   on('tool.call', { tool: 'mcp__teachme-anything__build_with_me' }, async ($, e) => ({ result: JSON.stringify(await buildWithMe($, e as never)) }))
   on('tool.call', { tool: 'mcp__teachme-anything__recheck_setup' }, async $ => ({ result: await recheck($) }))
   on('tool.call', { tool: 'mcp__teachme-anything__explore' }, async ($, e) => ({ result: JSON.stringify(await openExplore($, (e as unknown as { topic?: string }).topic)) }))
+  on('tool.call', { tool: 'mcp__teachme-anything__open' }, async ($, e) => ({ result: JSON.stringify(await openPage($, e as never)) }))
   on('tool.call', { tool: 'mcp__teachme-anything__submit_reading' }, async ($, e) => ({ result: JSON.stringify(await submitReading($, e as never)) }))
   on('tool.call', { tool: 'mcp__teachme-anything__submit_project' }, async ($, e) => ({ result: JSON.stringify(await submitProject($, e as never)) }))
 

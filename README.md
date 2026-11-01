@@ -20,7 +20,7 @@ An AI tutor plugin for [Claude Code](https://claude.com/claude-code). It writes 
 
    ```sh
    cd extension && npm install && npm run package
-   code --install-extension teachme-anything-0.8.3.vsix
+   code --install-extension teachme-anything-0.8.4.vsix
    ```
 
 ## What you get
