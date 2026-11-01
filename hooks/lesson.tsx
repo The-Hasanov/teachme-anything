@@ -13,7 +13,7 @@ import { milestoneErrors, replanErrors, untaught, validateCourse, validateProjec
 import { MANUAL, backUpScaffold, installPlan, isStaleScaffold, isTool, output, probeEnv, removeLesson, runCommand, runProbes, scaffold } from './host/adapters'
 import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
-import { DIR, append, hasCourse, install, load, newLog, progressMarkdown } from './host/store'
+import { DIR, append, hasCourse, ignoreLocal, install, load, newLog, progressMarkdown } from './host/store'
 import type { Log } from './host/store'
 import { AUTHOR_MODEL, AUTHOR_PROMPT, DOCTOR_PROMPT, GENERIC_INTAKE, SETUP_ADAPTERS, authorTask, courseTask, diagnose, projectTask, readingTask } from './host/teacher'
 import { verifySegment } from './host/verify'
@@ -76,6 +76,12 @@ type Session = {
   rewrite?: Set<string>
   // Ask: the prompt sent to the agent for this step, the turn that answers it, and its answer
   asking?: { step: string; prompt: string; question?: string; turn?: string; answer?: string }
+  // The position as last written to .teachme/position.md, and as last pointed to from a chat message
+  position?: string
+  sentPosition?: string
+  // This session's id in .teachme/session.lock; passive while a newer session drives this folder
+  lockId?: string
+  passive?: boolean
 }
 
 let sess: Session | undefined
@@ -137,6 +143,21 @@ async function refresh($: EngineInterface, layout?: LayoutOp) {
   const sc = screen(c)
   await update($, view, () => sc)
   if (s.vscode) void sendView($, s.vscode, sc, layout, dashboard(c))
+  // Best effort: a button press does not wait for it
+  void writePosition($, s, c)
+}
+
+// Where the learner is, in one file kept up to date, so the chat carries a pointer and not the whole text.
+// Only in a course folder: Explore or Build with me in an empty one leaves no .teachme/ behind
+const positionPath = (s: Session) => `${s.root}/${DIR}/position.md`
+async function writePosition($: EngineInterface, s: Session, c: Ctx) {
+  if (!s.course || s.passive) return
+  const text = snapshot(c)
+  if (text === s.position) return
+  const first = s.position === undefined
+  s.position = text
+  if (first) await ignoreLocal($, s.root)
+  await $.fs.write(positionPath(s), `${text}\n`).catch(err => $.ui.log(`teachme: position write failed: ${err}`, { to: 'debug' }))
 }
 
 async function commit($: EngineInterface, out: Out) {
@@ -240,10 +261,12 @@ async function ask($: EngineInterface, question?: string) {
   const prompt = [
     question ? `About the Teach Me step "${at.step.title}": ${question}` : `Explain the idea behind the Teach Me step "${at.step.title}" in more depth.`,
     'Follow the explain-step way: never give away an answer the learner has not found yet. Up to 6 short sentences, plain words, no headings.',
-    `<teachme-position>\n${snapshot(await ctx($))}\n</teachme-position>`,
+    `<tchm>${positionPath(s)}</tchm>`,
   ].join('\n\n')
   s.asking = { step: at.step.id, prompt, ...(question ? { question } : {}) }
   await refresh($)
+  // This prompt carries the pointer: the chat hook it passes through, and the next message, need not add one
+  s.sentPosition = s.position
   void metric($, { kind: 'ask', step: at.step.id, own: !!question })
   const r = await $.prompt.submit({ text: prompt })
   if (r.drop && s.asking?.prompt === prompt) { s.asking = { ...s.asking, answer: `Ask in the chat. Your place here is kept. (${r.drop})` }; await refresh($) }
@@ -888,12 +911,56 @@ export async function lessonRegister($: EngineInterface) {
     .catch(err => $.ui.log(`teachme: doctor agent: ${err}`, { to: 'debug' }))
 }
 
+// One session drives a course folder at a time: the newest. session.lock says which, with a heartbeat.
+// It never blocks: a new session always takes over, a crashed one's lock goes stale, and a session's end releases it
+const LOCK_STALE = 30_000
+const lockPath = (root: string) => `${root}/${DIR}/session.lock`
+type Lock = { id: string; beat: number }
+async function readLock($: EngineInterface, root: string): Promise<Lock | undefined> {
+  const l = await $.fs.read(lockPath(root)).then(t => JSON.parse(t) as Lock, () => undefined).catch(() => undefined)
+  return l?.id && typeof l.beat === 'number' ? l : undefined
+}
+const liveOther = (l: Lock | undefined, me: string, now: number) => !!l && l.id !== me && now - l.beat < LOCK_STALE
+
+async function takeLock($: EngineInterface, s: Session) {
+  const [me, now] = [await $.session.id(), await $.clock.now()]
+  if (liveOther(await readLock($, s.root), me, now)) $.ui.toast('Teach Me: another Claude Code session already has this course open. This one takes over the lesson; the other stops updating it.')
+  s.lockId = me
+  s.passive = false
+  await $.fs.write(lockPath(s.root), JSON.stringify({ id: me, beat: now })).catch(() => undefined)
+}
+
+async function heartbeat($: EngineInterface) {
+  const s = sess
+  if (!s?.course) return
+  // A course started or opened after the session began takes the lock here
+  if (!s.lockId) return takeLock($, s)
+  const now = await $.clock.now()
+  const passive = liveOther(await readLock($, s.root), s.lockId, now)
+  if (passive !== !!s.passive) {
+    s.passive = passive
+    if (passive) $.ui.toast('Teach Me: a newer Claude Code session has this course open. Continue there; this one stops updating the lesson.')
+    else { s.position = undefined; await refresh($) }
+  }
+  if (!passive) await $.fs.write(lockPath(s.root), JSON.stringify({ id: s.lockId, beat: now })).catch(() => undefined)
+}
+
+// The end of a session frees the folder at once; there is no delete, so an empty lock is a free one
+export async function lessonEnded($: EngineInterface) {
+  const s = sess
+  if (!s?.lockId || s.passive) return
+  const l = await readLock($, s.root)
+  if (!l || l.id === s.lockId) await $.fs.write(lockPath(s.root), '').catch(() => undefined)
+}
+
 export async function lessonStarted($: EngineInterface, cwd: string) {
   if (!(await hasCourse($, cwd))) await migrateMvp($, cwd)
   if (await hasCourse($, cwd)) {
     await open($, cwd)
+    if (sess) await takeLock($, sess)
     void $.ui.open({ id: PANE, title: sess?.course?.subject ?? 'Teach Me' })
   }
+  $.clock.every(10_000, () => heartbeat($))
   $.clock.every(2000, async () => { if (sess?.vscode) await tick($, sess.vscode) })
   // While the next lesson is written, redraw so the seconds count shows it is alive
   $.clock.every(5000, async () => { if (sess?.preparing) await refresh($) })
@@ -946,7 +1013,9 @@ export function lessonSection() {
   return {
     id: `${PLUGIN}:lesson`, scope: 'session' as const,
     text: 'Teach Me course in this folder. The lesson view (engine) runs every step, answer and hint; never repeat its content. ' +
-      'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists; their position is in <teachme-position> on their message. ' +
+      'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists. ' +
+      'What they see in the lesson view right now (the step, its code and choices, what they answered, or the reading or screen they have open) is in .teachme/position.md, rewritten by the engine on every change: read it before answering anything about the lesson. ' +
+      '<tchm>path</tchm> at the end of a message is Teach Me, not the learner: it means that file changed since their last message. ' +
       'End by pointing them back to the step in the lesson view. ' +
       'When they want to study a topic in depth or freely, call explore with it instead of explaining at length. ' +
       'Never edit .teachme/ or practice/.',
@@ -964,6 +1033,7 @@ export async function lessonBandText($: EngineInterface): Promise<string | undef
   const c = await ctx($)
   const at = current(c)
   const where = at ? ` · ${at.seg.title} ${at.index + 1}/${at.seg.steps.length}` : ` · ${c.state.stage}`
+  if (sess.passive) return `Teach Me · ${sess.course.subject} · a newer Claude Code session has this course open`
   return `Teach Me · ${sess.course.subject}${where}${sess.vscode?.isUp ? ' · VS Code ●' : sess.vscode?.isElsewhere ? ' · VS Code shows a newer Claude Code session' : ''}`
 }
 
@@ -1045,12 +1115,19 @@ export const registerLesson: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     if (!sess?.course || !e.text || e.text.startsWith('<')) return next(e)
-    if (sess.state.stage === 'lesson' && !sess.state.aside) {
-      const at = current(await ctx($))
+    const c = await ctx($)
+    // A question asked while Explore, Progress or an earlier step is open is not about the step in the lesson
+    const onStep = !c.explore && !c.build && !c.progress && !c.peek
+    if (sess.state.stage === 'lesson' && !sess.state.aside && onStep) {
+      const at = current(c)
       await commit($, { events: [{ ts: await $.clock.now(), type: 'aside', on: true, ...(at ? { step: at.step.id } : {}) }], effects: [] })
     }
-    const reply = sess.state.stage === 'lesson' ? '\nReply in at most 3 short sentences, no headings or lists; the lesson view keeps their place.' : ''
-    return next({ ...e, text: `${e.text}\n\n<teachme-position>\n${snapshot(await ctx($))}${reply}\n</teachme-position>` })
+    // The position lives in one file; the message only says when it changed since the last one
+    await writePosition($, sess, await ctx($))
+    // A session a newer one took over points nowhere: the file is the other session's
+    if (sess.passive || sess.position === sess.sentPosition) return next(e)
+    sess.sentPosition = sess.position
+    return next({ ...e, text: `${e.text}\n\n<tchm>${positionPath(sess)}</tchm>` })
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

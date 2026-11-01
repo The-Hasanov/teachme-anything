@@ -1,6 +1,6 @@
 import type { Register } from 'claude-code'
 
-import { isDoctor, lessonBandText, lessonGuard, lessonRegister, lessonSection, lessonStarted, lessonTutor, registerLesson } from './lesson'
+import { isDoctor, lessonBandText, lessonEnded, lessonGuard, lessonRegister, lessonSection, lessonStarted, lessonTutor, registerLesson } from './lesson'
 
 export const register: Register = (on, options) => {
   registerLesson(on, options)
@@ -11,6 +11,12 @@ export const register: Register = (on, options) => {
     const started = await next(e)
     await lessonStarted($, e.cwd).catch(() => undefined)
     return started
+  })
+
+  // Free the course folder for the next session at once, not after the lock goes stale
+  on('session.end', async ($, e, next) => {
+    await lessonEnded($).catch(() => undefined)
+    return next(e)
   })
 
   on('command.run', { command: 'tutor' }, async $ => (await lessonTutor($)) ?? { text: 'No course here yet. Say "teach me <subject>" to start one.' })
