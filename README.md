@@ -2,7 +2,9 @@
 
 Learn any technical skill with Claude Code as your teacher, in your own editor and terminal.
 
-![A lesson in VS Code: a wrong answer, why it is wrong, and a drill to fix it](docs/lesson.png)
+An AI tutor plugin for [Claude Code](https://claude.com/claude-code). It writes a course on any programming language, tool or codebase for you, gives you hands-on exercises checked by tests on your machine, and uses spaced repetition so mistakes don't come back. Works in VS Code or the terminal.
+
+![Teach Me Anything lesson in VS Code: a wrong answer, why it is wrong, and a drill to fix it](docs/lesson.png)
 
 ## Quick start
 
@@ -16,7 +18,7 @@ Learn any technical skill with Claude Code as your teacher, in your own editor a
 
    ```sh
    cd extension && npm install && npm run package
-   code --install-extension teachme-anything-0.8.1.vsix
+   code --install-extension teachme-anything-0.8.2.vsix
    ```
 
 3. In an empty folder, tell Claude Code: **"teach me &lt;subject&gt;"**.
@@ -42,10 +44,6 @@ Learn any technical skill with Claude Code as your teacher, in your own editor a
 ## Privacy
 
 Everything stays on your machine. Nothing is installed without your click, and the tutor never edits your code.
-
-## Development
-
-Run every test with `sh scripts/check.sh` (`--quick` skips the extension).
 
 ## License
 

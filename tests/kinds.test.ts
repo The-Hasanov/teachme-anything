@@ -55,7 +55,7 @@ test('reorder right in one go', () => {
   const l = at(sql.course, sql.sql1, 'q4')
   for (const n of [4, 2, 3, 1]) l.go({ choose: n })
   expect(l.sc().result).toEqual({ tone: 'right', text: 'Right, all of it.' })
-  expect(l.c.state.solved.q4).toBe(true)
+  expect(l.c.state.solved[`${sql.sql1.id}/q4`]).toBe(true)
 })
 
 test('trace: one cell per press, the table fills in, and a doubled count is the misconception it is', () => {

@@ -122,7 +122,7 @@ test('a miss on a drill gives the other angle, then returns to the task, not to 
   expect(l.step()).toBe('b3e')
   l.go({ choose: 1 }); l.go({ action: 'next' })
   expect(l.step()).toBe('b3')
-  expect(l.c.state.drills).toEqual({ b3: 2 })
+  expect(l.c.state.drills).toEqual({ 'branches-1/b3': 2 })
   expect(replay(l.log)).toEqual(l.c.state)
 })
 
@@ -463,7 +463,7 @@ test('reset a section: its answers, hints and reviews are cleared, the learner s
     { ts: l.c.now, type: 'migrated', skill: 'branch-model', state: 'practiced', evidence: 'x', date: '2026-01-01' },
     { ts: l.c.now, type: 'stage', stage: 'recap' },
   ], effects: [] })
-  expect([l.c.state.hints[step], l.c.state.done, l.c.state.migrated.length]).toEqual([1, 'branches-1', 1])
+  expect([l.c.state.hints[`branches-1/${step}`], l.c.state.done, l.c.state.migrated.length]).toEqual([1, 'branches-1', 1])
 
   const out = l.go({ action: 'reset:branches' })
   expect(out.events[0]).toMatchObject({ type: 'reset', segs: ['branches-1'], skills: ['branch-model', 'branch-switch', 'branch-commit', 'branch-from'], rewind: true })
@@ -509,7 +509,7 @@ test('"I don\'t know" teaches the idea, brings the skill back, and is neither ri
   expect(stats(git.course, l.c.state, l.c.now).skills.find(k => k.id === step.skill)?.idk).toBe(1)
   expect(snapshot(l.c)).toMatch(/do not know this one/)
   l.go({ choose: step.key![0]! + 1 })
-  expect(l.c.state.result[step.id]?.tone).toBe('right')
+  expect(l.c.state.result[`branches-1/${step.id}`]?.tone).toBe('right')
 })
 
 test('an intake question takes the learner\'s own words, and the tutor sees them', () => {
@@ -547,7 +547,7 @@ test('a segment ends with one more go at what is still open in it, then goes str
   expect(l.c.state.weak).not.toEqual({})
   const last = git.branches1.steps.findLastIndex(x => !x.drill)
   l.take({ events: [{ ts: l.c.now, type: 'enter', seg: 'branches-1', step: last }], effects: [] })
-  l.c.state = { ...l.c.state, solved: { ...l.c.state.solved, [git.branches1.steps[last]!.id]: true } }
+  l.c.state = { ...l.c.state, solved: { ...l.c.state.solved, [`branches-1/${git.branches1.steps[last]!.id}`]: true } }
   l.go({ action: 'next' })
   expect(screen(l.c).progress?.label).toMatch(/^Before you move on · 1 of/)
   expect(screen(l.c).actions.map(a => a.id)).toEqual(['skip', 'explore'])
@@ -647,4 +647,23 @@ test('placement: a learner who knows some of it answers quick questions, graded 
   skip.go({ action: 'skipcheck' })
   expect(skip.c.state.stage).toBe('setup')
   expect(snapshot(skip.c)).not.toMatch(/Placement check/)
+})
+
+test('#31 a later lesson that reuses a step id starts unanswered: no pick, no verdict, Next waits', () => {
+  const l = learner()
+  l.toLesson()
+  const i = git.branches1.steps.findIndex(x => x.choices && x.key)
+  const step = git.branches1.steps[i]!
+  l.take({ events: [{ ts: l.c.now, type: 'enter', seg: 'branches-1', step: i }], effects: [] })
+  l.go({ choose: step.choices!.findIndex((_, j) => !step.key!.includes(j)) + 1 })
+  expect(snapshot(l.c)).toMatch(/They answered/)
+  // The next lesson is written later, and its author picked the same step ids
+  l.c.segments['dup-1'] = { ...git.branches1, id: 'dup-1' }
+  l.take({ events: [{ ts: l.c.now, type: 'enter', seg: 'dup-1', step: i }], effects: [] })
+  expect(screen(l.c).result).toBeUndefined()
+  expect(screen(l.c).choices?.every(ch => !ch.mark)).toBe(true)
+  expect(snapshot(l.c)).not.toMatch(/They answered/)
+  expect(l.go({ action: 'next' }).events).toEqual([])
+  // The answer in the first lesson is still there
+  expect(l.c.state.result[`branches-1/${step.id}`]?.tone).toBe('wrong')
 })

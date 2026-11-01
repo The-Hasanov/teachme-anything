@@ -76,7 +76,7 @@ function forget(s: LearnerState, e: Extract<LogEvent, { type: 'reset' }>): Learn
   const segs = new Set(e.segs)
   const skills = new Set(e.skills)
   const without = <T>(r: Record<string, T>, drop: (key: string, value: T) => boolean) => Object.fromEntries(Object.entries(r).filter(([k, v]) => !drop(k, v)))
-  const isStep = (k: string) => steps.has(k.replace(/^warm\d+:/, ''))
+  const isStep = (k: string) => segs.has(k.replace(/^warm\d+:/, '').split('/')[0]!)
   const isGone = (w: Weakness) => skills.has(w.skill ?? '') || (w.steps.length > 0 && w.steps.every(x => steps.has(x)))
   const weak = without(s.weak, (_, w) => isGone(w))
   return {
@@ -94,7 +94,13 @@ function forget(s: LearnerState, e: Extract<LogEvent, { type: 'reset' }>): Learn
   }
 }
 
+// Per-step state is kept under seg/step: lessons are written one at a time and reuse step ids (#31).
+// Events carry the bare id (or warmN:id); the segment is where the learner is, as current() finds it.
+export const stepKey = (seg: string, id: string) => `${seg}/${id}`
+const segNow = (s: LearnerState) => s.warm?.items[s.warm.i]?.seg ?? s.pos?.seg ?? ''
+
 export function apply(s: LearnerState, e: LogEvent): LearnerState {
+  const k = (id: string) => { const m = /^(warm\d+:)?(.*)$/.exec(id)!; return `${m[1] ?? ''}${stepKey(segNow(s), m[2]!)}` }
   const tries = (step: string) => ({ ...s.tries, [step]: (s.tries[step] ?? 0) + 1 })
   switch (e.type) {
     case 'course': return { ...s, course: e.course, stage: 'intake' }
@@ -104,7 +110,8 @@ export function apply(s: LearnerState, e: LogEvent): LearnerState {
     case 'enter': {
       const back = typeof e.back === 'number' ? { seg: e.seg, step: e.back } : e.back
       const weak = e.drill && s.weak[e.drill] ? { ...s.weak, [e.drill]: { ...s.weak[e.drill]!, used: [...s.weak[e.drill]!.used, `${e.seg}/${e.step}`] } } : s.weak
-      const drills = e.from ? { ...s.drills, [e.from]: (s.drills[e.from] ?? 0) + 1 } : s.drills
+      const from = e.from && stepKey(back?.seg ?? e.seg, e.from)
+      const drills = from ? { ...s.drills, [from]: (s.drills[from] ?? 0) + 1 } : s.drills
       return { ...s, pos: { seg: e.seg, step: e.step, ...(back ? { back } : {}) }, aside: false, weak, drills, since: e.ts, done: undefined }
     }
     case 'warm': return {
@@ -116,12 +123,12 @@ export function apply(s: LearnerState, e: LogEvent): LearnerState {
     case 'added': return { ...s, added: { ...s.added, [e.seg]: true } }
     case 'dontknow': return {
       ...s, ...(e.skill ? learn(s, { ts: e.ts, step: e.step, ok: false, skill: e.skill, hints: 0, cls: 'prereq' }) : {}),
-      idk: { ...s.idk, [e.step]: e.skill ?? '' }, since: e.ts,
+      idk: { ...s.idk, [k(e.step)]: e.skill ?? '' }, since: e.ts,
     }
-    case 'aside': return { ...s, aside: e.on, asked: e.on && e.step ? { ...s.asked, [e.step]: true } : s.asked }
-    case 'hint': return { ...s, hints: { ...s.hints, [e.step]: e.level } }
-    case 'pick': return { ...s, draft: { ...s.draft, [e.step]: e.picked } }
-    case 'frame': return { ...s, frame: { ...s.frame, [e.step]: e.i } }
+    case 'aside': return { ...s, aside: e.on, asked: e.on && e.step ? { ...s.asked, [k(e.step)]: true } : s.asked }
+    case 'hint': return { ...s, hints: { ...s.hints, [k(e.step)]: e.level } }
+    case 'pick': return { ...s, draft: { ...s.draft, [k(e.step)]: e.picked } }
+    case 'frame': return { ...s, frame: { ...s.frame, [k(e.step)]: e.i } }
     case 'migrated-note': {
       const key = e.skill && `skill:${e.skill}`
       const weak = key && !s.weak[key] ? { ...s.weak, [key]: { key, skill: e.skill, cls: 'misconception' as const, count: 1, status: 'open' as const, steps: [], used: [], last: e.ts } } : s.weak
@@ -133,7 +140,7 @@ export function apply(s: LearnerState, e: LogEvent): LearnerState {
     case 'read': return { ...s, read: { ...s.read, [e.reading]: [...new Set([...(s.read[e.reading] ?? []), e.section])] } }
     case 'answer': {
       const ok = e.verdict === 'right'
-      const rk = e.rk ?? e.step
+      const rk = k(e.rk ?? e.step)
       return {
         ...s,
         ...learn(s, { ts: e.ts, step: e.step, ok, skill: e.skill, hints: e.hints, cls: e.class, tag: e.tag, prereq: e.prereq, remedy: e.remedy, review: e.review, uses: e.uses }),
@@ -155,9 +162,9 @@ export function apply(s: LearnerState, e: LogEvent): LearnerState {
       return {
         ...s,
         ...(known ? learn(s, { ts: e.ts, step: e.step, ok: e.ok, skill: e.skill, hints: e.hints, cls: e.class, tag: e.tag, prereq: e.prereq, remedy: e.remedy, review: e.review, uses: e.uses }) : {}),
-        tries: tries(e.step),
-        result: { ...s.result, [e.step]: result },
-        solved: e.ok ? { ...s.solved, [e.step]: true } : s.solved,
+        tries: tries(k(e.step)),
+        result: { ...s.result, [k(e.step)]: result },
+        solved: e.ok ? { ...s.solved, [k(e.step)]: true } : s.solved,
         evidence: e.skill ? [...s.evidence, evidenceOf(e, e.ok, s.since)] : s.evidence,
         since: e.ts,
         mistakes: e.ok || !e.class ? s.mistakes : [...s.mistakes, { ts: e.ts, step: e.step, skill: e.skill, class: e.class, tag: e.tag }],
@@ -167,7 +174,7 @@ export function apply(s: LearnerState, e: LogEvent): LearnerState {
       return {
         ...s,
         ...learn(s, { ts: e.ts, step: e.step, ok: false, skill: e.skill, hints: 0, cls: e.class, tag: e.tag }),
-        result: { ...s.result, [e.step]: { tone: 'wrong', text: e.feedback } },
+        result: { ...s.result, [k(e.step)]: { tone: 'wrong', text: e.feedback } },
         mistakes: [...s.mistakes, { ts: e.ts, step: e.step, skill: e.skill, class: e.class, tag: e.tag }],
       }
   }
@@ -204,7 +211,10 @@ function toSetup(c: Ctx, events: LogEvent[]): Out {
   const first = segmentOrder(c.course!)[0]
   return { events: [...events, { ts: c.now, type: 'stage', stage: 'setup' }], effects: [{ kind: 'setup' }, ...(first && !c.segments[first] ? [{ kind: 'prepare' as const, after: '', seg: first }] : [])] }
 }
-const resultKey = (c: Ctx, at: At) => at.warm ? `warm${c.state.warm?.n ?? 0}:${at.step.id}` : at.step.id
+const sk = (at: { seg: { id: string }; step: { id: string } }) => stepKey(at.seg.id, at.step.id)
+// rk as events write it (apply adds the segment); resultKey as state keeps it
+const eventKey = (c: Ctx, at: At) => at.warm ? `warm${c.state.warm?.n ?? 0}:${at.step.id}` : at.step.id
+const resultKey = (c: Ctx, at: At) => at.warm ? `warm${c.state.warm?.n ?? 0}:${sk(at)}` : sk(at)
 const classOf = (c: Ctx, skill: string | undefined, fallback: MistakeClass, tag?: string): MistakeClass =>
   tag && c.state.weak[tag] && c.state.weak[tag]!.status !== 'resolved' ? fallback : classify(c.state, skill, fallback)
 
@@ -212,10 +222,10 @@ const prereqOf = (c: Ctx, skill?: string, tag?: string) =>
   c.course?.skills.find(k => k.id === skill)?.misconceptions.find(m => m.tag === tag)?.prereq
 
 const graded = (c: Ctx, at: At) => ({
-  skill: at.step.skill, difficulty: at.step.difficulty, unseen: at.step.unseen && !c.state.asked?.[at.step.id], hints: c.state.hints[at.step.id] ?? 0,
+  skill: at.step.skill, difficulty: at.step.difficulty, unseen: at.step.unseen && !c.state.asked?.[sk(at)], hints: c.state.hints[sk(at)] ?? 0,
   ...(at.step.remedy ? { remedy: at.step.remedy } : {}),
   ...(at.step.uses?.length ? { uses: at.step.uses } : {}),
-  ...(at.warm ? { review: at.warm.key, rk: resultKey(c, at) } : {}),
+  ...(at.warm ? { review: at.warm.key, rk: eventKey(c, at) } : {}),
 })
 
 function enter(c: Ctx, seg: string, step: number, extra: { back?: { seg: string; step: number }; from?: string; drill?: string } = {}): Out {
@@ -233,21 +243,22 @@ function enter(c: Ctx, seg: string, step: number, extra: { back?: { seg: string;
 const rootOf = (c: Ctx, at: At) => {
   const back = at.step.drill && !at.warm ? c.state.pos?.back : undefined
   const id = back && c.segments[back.seg]?.steps[back.step]?.id
-  return back && id ? { back, id } : { back: { seg: at.seg.id, step: at.index }, id: at.step.id }
+  const root = back && id ? { back, id } : { back: { seg: at.seg.id, step: at.index }, id: at.step.id }
+  return { ...root, key: stepKey(root.back.seg, root.id) }
 }
 
 function advance(c: Ctx, skipBranch = false): Out {
   const at = current(c)
   if (!at) return NONE
   const { seg, step, index } = at
-  const branch = c.state.result[step.id]?.branch
-  if (!skipBranch && branch && !c.state.solved[step.id]) {
+  const branch = c.state.result[sk(at)]?.branch
+  if (!skipBranch && branch && !c.state.solved[sk(at)]) {
     const [bseg, bid] = branch.includes('/') ? branch.split('/') as [string, string] : [seg.id, branch]
     const target = c.segments[bseg]?.steps.findIndex(x => x.id === bid) ?? -1
     const tag = c.segments[bseg]?.steps[target]?.remedy ?? c.state.mistakes.at(-1)?.tag
     const drill = c.segments[bseg]?.steps[target]
     const root = rootOf(c, at)
-    if (target >= 0 && drill && !c.state.result[drill.id]) return enter(c, bseg, target, { back: root.back, from: root.id, ...(tag ? { drill: tag } : {}) })
+    if (target >= 0 && drill && !c.state.result[stepKey(bseg, drill.id)]) return enter(c, bseg, target, { back: root.back, from: root.id, ...(tag ? { drill: tag } : {}) })
   }
   const back = c.state.pos?.back
   if (back && !skipBranch) return enter(c, back.seg, back.step)
@@ -264,9 +275,9 @@ function advance(c: Ctx, skipBranch = false): Out {
 }
 
 function remedyFor(c: Ctx, at: At, cls: MistakeClass, tag?: string, scripted?: string): { branch?: string; effects: Effect[] } {
-  if (at.warm || cls === 'slip' || (c.state.drills[rootOf(c, at).id] ?? 0) >= MAX_DRILLS) return { effects: [] }
+  if (at.warm || cls === 'slip' || (c.state.drills[rootOf(c, at).key] ?? 0) >= MAX_DRILLS) return { effects: [] }
   const used = new Set(tag ? c.state.weak[tag]?.used ?? [] : [])
-  const fresh = (segId: string, i: number, x: Step) => x.drill && !used.has(`${segId}/${i}`) && !c.state.result[x.id]
+  const fresh = (segId: string, i: number, x: Step) => x.drill && !used.has(`${segId}/${i}`) && !c.state.result[stepKey(segId, x.id)]
   const local = at.seg.steps.findIndex((x, i) => fresh(at.seg.id, i, x) && (x.id === scripted || (!!tag && x.remedy === tag)))
   if (local >= 0) return { branch: at.seg.steps[local]!.id, effects: [] }
   for (const g of Object.values(c.segments)) {
@@ -290,7 +301,7 @@ function answer(c: Ctx, at: At, n: number): Out {
     const draft = c.state.draft[rk] ?? []
     if (step.kind === 'reorder' && draft.includes(i)) return NONE
     picked = [...draft, i]
-    if (picked.length < step.key.length) return { events: [{ ts: c.now, type: 'pick', step: rk, picked }], effects: [] }
+    if (picked.length < step.key.length) return { events: [{ ts: c.now, type: 'pick', step: eventKey(c, at), picked }], effects: [] }
   }
   const same = (a: number, b: number) => a === b || step.choices![a]!.text === step.choices![b]!.text
   const miss = isSequence(step) ? picked.findIndex((p, j) => !same(p, step.key![j]!)) : step.key.includes(i) ? -1 : 0
@@ -313,9 +324,10 @@ function answer(c: Ctx, at: At, n: number): Out {
   }
 }
 
-function hint(c: Ctx, step: Step): Out {
-  const level = (c.state.hints[step.id] ?? 0) + 1
-  if (!step.hints || !c.state.tries[step.id] || level > step.hints.length || c.state.solved[step.id]) return NONE
+function hint(c: Ctx, at: At): Out {
+  const { step } = at
+  const level = (c.state.hints[sk(at)] ?? 0) + 1
+  if (!step.hints || !c.state.tries[sk(at)] || level > step.hints.length || c.state.solved[sk(at)]) return NONE
   return { events: [{ ts: c.now, type: 'hint', step: step.id, level }], effects: [] }
 }
 
@@ -324,7 +336,7 @@ export function dueItems(c: Ctx): WarmItem[] {
   const questions = Object.values(c.segments).flatMap(g => g.steps.map((x, i) => ({ g, x, i }))).filter(({ x }) => x.choices && x.key)
   const pick = (key: string, match: (x: Step) => boolean, avoid: string[]): WarmItem | undefined => {
     const all = questions.filter(q => match(q.x))
-    const best = all.find(q => !s.result[q.x.id] && !avoid.includes(q.x.id)) ?? all.find(q => !avoid.includes(q.x.id)) ?? all[0]
+    const best = all.find(q => !s.result[stepKey(q.g.id, q.x.id)] && !avoid.includes(q.x.id)) ?? all.find(q => !avoid.includes(q.x.id)) ?? all[0]
     return best && { seg: best.g.id, step: best.x.id, key }
   }
   const items: WarmItem[] = []
@@ -428,23 +440,23 @@ export function press(c: Ctx, p: Press): Out {
   // A question of their own about the step, typed beside it while stepped aside
   if (s.aside && 'text' in p) return p.text.trim() ? { events: [], effects: [{ kind: 'ask', question: p.text.trim().slice(0, 300) }] } : NONE
   if (action === 'curriculum') return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
-  if (action === 'dontknow' && step.choices && !s.result[step.id] && s.idk[step.id] === undefined) return { events: [{ ts: c.now, type: 'dontknow', step: step.id, ...(step.skill ? { skill: step.skill } : {}) }], effects: [] }
+  if (action === 'dontknow' && step.choices && !s.result[sk(at)] && s.idk[sk(at)] === undefined) return { events: [{ ts: c.now, type: 'dontknow', step: step.id, ...(step.skill ? { skill: step.skill } : {}) }], effects: [] }
   if ('choose' in p) {
     // An answer given while the explanation is open closes it: the learner is back on the step
     const out = answer(c, at, p.choose)
     return s.aside && out.events.length ? { events: [{ ts: c.now, type: 'aside', on: false }, ...out.events], effects: out.effects } : out
   }
-  const draft = s.draft[step.id] ?? []
-  if ((action === 'undo' || action === 'clear') && draft.length && !s.result[step.id]) return { events: [{ ts: c.now, type: 'pick', step: step.id, picked: action === 'undo' ? draft.slice(0, -1) : [] }], effects: [] }
-  const frame = s.frame[step.id] ?? 0
+  const draft = s.draft[sk(at)] ?? []
+  if ((action === 'undo' || action === 'clear') && draft.length && !s.result[sk(at)]) return { events: [{ ts: c.now, type: 'pick', step: step.id, picked: action === 'undo' ? draft.slice(0, -1) : [] }], effects: [] }
+  const frame = s.frame[sk(at)] ?? 0
   if (step.frames && (action === 'frame-next' || action === 'frame-prev')) {
     const i = Math.max(0, Math.min(step.frames.length - 1, frame + (action === 'frame-next' ? 1 : -1)))
     return i === frame ? NONE : { events: [{ ts: c.now, type: 'frame', step: step.id, i }], effects: [] }
   }
-  if (action === 'hint') return hint(c, step)
-  if (action === 'check' && step.check && !c.busy && c.state.result[step.id]?.tone !== 'wait') return { events: [], effects: [{ kind: 'check', step: step.id }] }
-  if (action === 'next' && canLeave(c, step)) return advance(c)
-  if (action === 'skip' && canSkip(c, step)) {
+  if (action === 'hint') return hint(c, at)
+  if (action === 'check' && step.check && !c.busy && c.state.result[sk(at)]?.tone !== 'wait') return { events: [], effects: [{ kind: 'check', step: step.id }] }
+  if (action === 'next' && canLeave(c, at)) return advance(c)
+  if (action === 'skip' && canSkip(c, at)) {
     const go = advance(c, true)
     return { events: [{ ts: c.now, type: 'skip', step: step.id }, ...go.events], effects: go.effects }
   }
@@ -490,9 +502,9 @@ const ahead = (c: Ctx) => {
 }
 
 // A question without choices (one cached before the schema refused it, #15) has nothing to answer: Next goes on
-const canLeave = (c: Ctx, step: Step) =>
-  QUESTION_KINDS.has(step.kind) && step.choices ? !!c.state.result[step.id] || c.state.idk[step.id] !== undefined : TASK_KINDS.has(step.kind) ? !!c.state.solved[step.id] || !!c.state.result[step.id]?.branch : true
-const canSkip = (c: Ctx, step: Step) => TASK_KINDS.has(step.kind) && !c.state.solved[step.id] && (c.state.tries[step.id] ?? 0) >= 2
+const canLeave = (c: Ctx, at: At) =>
+  QUESTION_KINDS.has(at.step.kind) && at.step.choices ? !!c.state.result[sk(at)] || c.state.idk[sk(at)] !== undefined : TASK_KINDS.has(at.step.kind) ? !!c.state.solved[sk(at)] || !!c.state.result[sk(at)]?.branch : true
+const canSkip = (c: Ctx, at: At) => TASK_KINDS.has(at.step.kind) && !c.state.solved[sk(at)] && (c.state.tries[sk(at)] ?? 0) >= 2
 
 export const setupDone = (c: Ctx) => !!c.course && c.course.setup.length > 0 && c.course.setup.every(r => c.state.setup[r.id]?.status === 'ok')
 
@@ -518,7 +530,7 @@ export function checked(c: Ctx, stepId: string, results: readonly ProbeResult[])
       effects: fix.effects,
     }
   }
-  const esc = `${step.id}#${(c.state.tries[step.id] ?? 0) + 1}`
+  const esc = `${step.id}#${(c.state.tries[sk(at)] ?? 0) + 1}`
   return {
     events: [{ ts: c.now, type: 'check', step: step.id, ok: false, probe: failed.id, got, pending: esc, ...factOf(step, failed), ...graded(c, at) }],
     effects: [{ kind: 'escalate', esc, step: step.id, probe: failed.id, got }],
@@ -535,7 +547,7 @@ const okText = (step: Step) => step.choices ? 'Right.' : 'Done. That is the resu
 export function taught(c: Ctx, esc: string, v: { class: MistakeClass; tag?: string; feedback: string }): Out {
   const at = current(c)
   const [stepId] = esc.split('#')
-  if (!at || at.step.id !== stepId || c.state.result[stepId]?.tone !== 'wait') return NONE
+  if (!at || at.step.id !== stepId || c.state.result[sk(at)]?.tone !== 'wait') return NONE
   return { events: [{ ts: c.now, type: 'feedback', step: stepId, esc, class: v.class, feedback: v.feedback, ...(v.tag ? { tag: v.tag } : {}), ...(at.step.skill ? { skill: at.step.skill } : {}) }], effects: [] }
 }
 
@@ -651,7 +663,7 @@ export function screen(c: Ctx): Screen {
   const total = seg.steps.filter(x => !x.drill).length
   // The place line is also the way to the path: one tap from any step, and Continue there comes back to it
   const progress = { label: `${seg.title} · ${step.drill ? 'practice' : `${stepNumber(seg, index)} of ${total}`}`, done: stepNumber(seg, index) - 1, total, action: 'curriculum' }
-  const level = s.hints[step.id] ?? 0
+  const level = s.hints[sk(at)] ?? 0
   const base = {
     title: step.title, progress, body: step.body,
     ...(step.more ? { more: step.more } : {}), ...(step.compare ? { compare: step.compare } : {}),
@@ -662,9 +674,9 @@ export function screen(c: Ctx): Screen {
   const ask = act('ask', 'Ask', false, 'a')
   const sc = ((): Screen => {
     if (step.choices) {
-      const draft = s.draft[step.id] ?? []
+      const draft = s.draft[sk(at)] ?? []
       const edit = !res && draft.length ? [act('undo', 'Undo', false, 'u'), act('clear', 'Start over')] : []
-      const unsure = s.idk[step.id] !== undefined
+      const unsure = s.idk[sk(at)] !== undefined
       const result = res ? { tone: res.tone, text: res.text } : unsure ? { tone: 'info' as const, text: teaching(at) } : undefined
       return {
         kind: 'question', ...base, ...answerParts(step, res, draft),
@@ -675,8 +687,8 @@ export function screen(c: Ctx): Screen {
       }
     }
     if (step.check) {
-      const solved = !!s.solved[step.id]
-      const canHint = !!step.hints && !!s.tries[step.id] && level < step.hints.length && !solved
+      const solved = !!s.solved[sk(at)]
+      const canHint = !!step.hints && !!s.tries[sk(at)] && level < step.hints.length && !solved
       const result = c.busy ? { tone: 'wait' as const, text: c.busy } : res ? { tone: res.tone, text: res.text } : undefined
       const actions = solved
         ? [act('next', 'Next', true, 'enter')]
@@ -684,14 +696,14 @@ export function screen(c: Ctx): Screen {
           act('check', res ? 'Check again' : 'Check', true, 'enter'),
           ...(res?.branch ? [act('next', 'Practice this', false, 'p')] : []),
           ...(canHint ? [act('hint', `Hint ${level + 1}`, false, 'h')] : []),
-          ...(canSkip(c, step) ? [act('skip', 'Move on for now', false, 's')] : []),
+          ...(canSkip(c, at) ? [act('skip', 'Move on for now', false, 's')] : []),
           ask, EXPLORE,
         ]
       const where = seg.practice ? { where: { dir: seg.practice.dir, ...(step.open ? { file: step.open } : {}) } } : {}
       return { kind: 'exercise', ...base, ...where, ...(result ? { result } : {}), actions }
     }
     if (step.frames) {
-      const i = s.frame[step.id] ?? 0
+      const i = s.frame[sk(at)] ?? 0
       const f = step.frames[i]!
       const last = i === step.frames.length - 1
       return {
@@ -817,11 +829,11 @@ function peekScreen(c: Ctx, p: { seg: string; step: number }): Screen | undefine
   const step = seg?.steps[p.step]
   if (!seg || !step) return undefined
   const s = c.state
-  const res = s.result[step.id]
+  const res = s.result[stepKey(seg.id, step.id)]
   const total = seg.steps.filter(x => !x.drill).length
   const n = stepNumber(seg, p.step)
   const at = s.stage === 'lesson' && !s.done ? current(c) : undefined
-  const fi = step.frames ? Math.min(s.frame[step.id] ?? step.frames.length - 1, step.frames.length - 1) : 0
+  const fi = step.frames ? Math.min(s.frame[stepKey(seg.id, step.id)] ?? step.frames.length - 1, step.frames.length - 1) : 0
   const f = step.frames?.[fi]
   const prev = lookBack(c, p.seg, p.step, -1), next = lookBack(c, p.seg, p.step, 1)
   return {
@@ -1029,7 +1041,7 @@ function stepText(c: Ctx, at: At) {
     step.code ? `Code (${step.code.lang}):\n${step.code.source}` : '',
     step.choices ? `Choices: ${step.choices.map((ch, i) => `${i + 1}) ${ch.code ?? ch.text}`).join(' · ')}` : '',
     res?.picked ? `They answered ${res.picked.map(i => i + 1).join(', ')}: ${res.tone}.` : '',
-    c.state.idk[step.id] !== undefined && !res ? 'They said they do not know this one yet.' : '',
+    c.state.idk[sk(at)] !== undefined && !res ? 'They said they do not know this one yet.' : '',
   ].filter(Boolean).join('\n')
 }
 
@@ -1125,7 +1137,7 @@ export function snapshot(c: Ctx): string {
     weak.length ? `Keep sharp: ${weak.join(', ')}.` : '',
     s.notes.length ? `Notes from earlier sessions: ${s.notes.slice(-5).join(' · ')}` : '',
     s.aside ? 'The learner stepped aside to ask a question; their place in the lesson is kept.' : '',
-    at && canSkip(c, at.step) ? `They have tried this ${c.state.tries[at.step.id]} times, so they may move on now: the lesson's "Move on for now" button. The skill comes back in a later warm-up. If they want to skip, say that and nothing more.` : '',
-    at && !s.solved[at.step.id] && (at.step.check || at.step.choices) ? `They have not solved this step yet${at.step.unseen ? ' (a transfer task that proves the skill)' : ''}: explain the idea, never the command or answer that solves it.` : '',
+    at && canSkip(c, at) ? `They have tried this ${c.state.tries[sk(at)]} times, so they may move on now: the lesson's "Move on for now" button. The skill comes back in a later warm-up. If they want to skip, say that and nothing more.` : '',
+    at && !s.solved[sk(at)] && (at.step.check || at.step.choices) ? `They have not solved this step yet${at.step.unseen ? ' (a transfer task that proves the skill)' : ''}: explain the idea, never the command or answer that solves it.` : '',
   ].filter(Boolean).join('\n')
 }

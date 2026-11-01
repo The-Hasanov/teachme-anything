@@ -146,7 +146,7 @@ test('a new session resumes the check before the next lesson as it was left, ans
   for (const k of step.key!) l.go({ choose: k === step.key![0] ? ((k + 1) % step.choices!.length) + 1 : k + 1 })
   const last = seg.steps.findLastIndex(x => !x.drill)
   l.take({ events: [{ ts: l.c.now, type: 'enter', seg: seg.id, step: last }], effects: [] })
-  l.c.state = { ...l.c.state, solved: { ...l.c.state.solved, [seg.steps[last]!.id]: true }, result: { ...l.c.state.result, [seg.steps[last]!.id]: { tone: 'right', text: '' } } }
+  l.c.state = { ...l.c.state, solved: { ...l.c.state.solved, [`${seg.id}/${seg.steps[last]!.id}`]: true }, result: { ...l.c.state.result, [`${seg.id}/${seg.steps[last]!.id}`]: { tone: 'right', text: '' } } }
   l.go({ action: 'next' })
   expect(screen(l.c).progress?.label).toMatch(/^Before you move on · 1 of/)
   l.go({ choose: 1 })
@@ -166,7 +166,7 @@ test('the check before the next lesson can be left for the path, and Continue th
   for (const k of step.key!) l.go({ choose: k === step.key![0] ? ((k + 1) % step.choices!.length) + 1 : k + 1 })
   const last = seg.steps.findLastIndex(x => !x.drill)
   l.take({ events: [{ ts: l.c.now, type: 'enter', seg: seg.id, step: last }], effects: [] })
-  l.c.state = { ...l.c.state, solved: { ...l.c.state.solved, [seg.steps[last]!.id]: true }, result: { ...l.c.state.result, [seg.steps[last]!.id]: { tone: 'right', text: '' } } }
+  l.c.state = { ...l.c.state, solved: { ...l.c.state.solved, [`${seg.id}/${seg.steps[last]!.id}`]: true }, result: { ...l.c.state.result, [`${seg.id}/${seg.steps[last]!.id}`]: { tone: 'right', text: '' } } }
   l.go({ action: 'next' })
   l.go({ choose: 1 })
   expect(screen(l.c).progress?.action).toBe('curriculum')
