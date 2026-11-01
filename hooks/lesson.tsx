@@ -145,11 +145,12 @@ async function refresh($: EngineInterface, layout?: LayoutOp) {
 
 // Where the learner is, in one file kept up to date, so the chat carries a pointer and not the whole text
 const positionPath = (s: Session) => `${s.root}/${DIR}/position.md`
+const POSITION_HEAD = '<!-- Teach Me: what the learner sees in the lesson view right now. The engine rewrites this file on every change; read it before answering about the lesson, never edit it. -->'
 async function writePosition($: EngineInterface, s: Session, c: Ctx) {
   const text = snapshot(c)
   if (text === s.position) return
   s.position = text
-  await $.fs.write(positionPath(s), `${text}\n`).catch(err => $.ui.log(`teachme: position write failed: ${err}`, { to: 'debug' }))
+  await $.fs.write(positionPath(s), `${POSITION_HEAD}\n\n${text}\n`).catch(err => $.ui.log(`teachme: position write failed: ${err}`, { to: 'debug' }))
 }
 
 async function commit($: EngineInterface, out: Out) {
@@ -959,7 +960,9 @@ export function lessonSection() {
   return {
     id: `${PLUGIN}:lesson`, scope: 'session' as const,
     text: 'Teach Me course in this folder. The lesson view (engine) runs every step, answer and hint; never repeat its content. ' +
-      'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists; their current position is always in .teachme/position.md (read it when the message is about the lesson); <tchm>path</tchm> on a message means it changed. ' +
+      'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists. ' +
+      'What they see in the lesson view right now (the step, its code and choices, what they answered, or the reading or screen they have open) is in .teachme/position.md, rewritten by the engine on every change: read it before answering anything about the lesson. ' +
+      '<tchm>path</tchm> at the end of a message is Teach Me, not the learner: it means that file changed since their last message. ' +
       'End by pointing them back to the step in the lesson view. ' +
       'When they want to study a topic in depth or freely, call explore with it instead of explaining at length. ' +
       'Never edit .teachme/ or practice/.',
