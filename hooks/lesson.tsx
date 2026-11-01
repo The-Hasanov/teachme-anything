@@ -13,7 +13,7 @@ import { milestoneErrors, replanErrors, untaught, validateCourse, validateProjec
 import { MANUAL, backUpScaffold, installPlan, isStaleScaffold, isTool, output, probeEnv, removeLesson, runCommand, runProbes, scaffold } from './host/adapters'
 import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
-import { DIR, append, hasCourse, ignoreLocal, install, load, newLog, progressMarkdown } from './host/store'
+import { DIR, append, hasCourse, ignoreLocal, install, load, newLog, progressMarkdown, writeGuide } from './host/store'
 import type { Log } from './host/store'
 import { AUTHOR_MODEL, AUTHOR_PROMPT, DOCTOR_PROMPT, GENERIC_INTAKE, SETUP_ADAPTERS, authorTask, courseTask, diagnose, projectTask, readingTask } from './host/teacher'
 import { verifySegment } from './host/verify'
@@ -150,13 +150,15 @@ async function refresh($: EngineInterface, layout?: LayoutOp) {
 // Where the learner is, in one file kept up to date, so the chat carries a pointer and not the whole text.
 // Only in a course folder: Explore or Build with me in an empty one leaves no .teachme/ behind
 const positionPath = (s: Session) => `${s.root}/${DIR}/position.md`
+// Relative to the course folder, the agent's own: the instructions and .teachme/CLAUDE.md say what it is
+const POINTER = `<tchm>${DIR}/position.md</tchm>`
 async function writePosition($: EngineInterface, s: Session, c: Ctx) {
   if (!s.course || s.passive) return
   const text = snapshot(c)
   if (text === s.position) return
   const first = s.position === undefined
   s.position = text
-  if (first) await ignoreLocal($, s.root)
+  if (first) { await ignoreLocal($, s.root); await writeGuide($, s.root) }
   await $.fs.write(positionPath(s), `${text}\n`).catch(err => $.ui.log(`teachme: position write failed: ${err}`, { to: 'debug' }))
 }
 
@@ -261,7 +263,7 @@ async function ask($: EngineInterface, question?: string) {
   const prompt = [
     question ? `About the Teach Me step "${at.step.title}": ${question}` : `Explain the idea behind the Teach Me step "${at.step.title}" in more depth.`,
     'Follow the explain-step way: never give away an answer the learner has not found yet. Up to 6 short sentences, plain words, no headings.',
-    `<tchm>${positionPath(s)}</tchm>`,
+    POINTER,
   ].join('\n\n')
   s.asking = { step: at.step.id, prompt, ...(question ? { question } : {}) }
   await refresh($)
@@ -626,7 +628,10 @@ async function openPage($: EngineInterface, input: { page?: string; name?: strin
     const l = reached.find(x => hit(x.title, x.id))
     if (!l) return { error: `No lesson they reached matches "${input.name ?? ''}". Reached: ${reached.map(x => x.title).join(', ') || 'none yet'}.` }
     s.explore = undefined
-    await commit($, press(await ctx($), { action: `open:${l.id}` }))
+    const out = press(await ctx($), { action: `open:${l.id}` })
+    // The lesson under way, while they are in it, is already its step; anything else that opens nothing is an error
+    if (!out.events.length && !out.effects.length && !(l.status === 'now' && s.state.stage === 'lesson')) return { error: `"${l.title}" could not be opened.` }
+    await commit($, out)
     return shown()
   }
   if (input.page === 'reading') {
@@ -1061,7 +1066,8 @@ export function lessonSection() {
     text: 'Teach Me course in this folder. The lesson view (engine) runs every step, answer and hint; never repeat its content. ' +
       'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists. ' +
       'What they see in the lesson view right now (the step, its code and choices, what they answered, or the reading or screen they have open) is in .teachme/position.md, rewritten by the engine on every change: read it before answering anything about the lesson. ' +
-      '<tchm>path</tchm> at the end of a message is Teach Me, not the learner: it means that file changed since their last message. ' +
+      `${POINTER} at the end of a message is Teach Me, not the learner: it means that file changed since their last message. ` +
+      'What each file in .teachme/ is: .teachme/CLAUDE.md. ' +
       'End by pointing them back to the step in the lesson view. ' +
       'When they want to study a topic in depth or freely, call explore with it instead of explaining at length. ' +
       'Explore readings are optional and never count as taught: when a step needs something no lesson taught them, explain the idea in the chat (never the answer); never send them to a reading for it, and never call a reading a lesson. ' +
@@ -1176,7 +1182,7 @@ export const registerLesson: Register = on => {
     // A session a newer one took over points nowhere: the file is the other session's
     if (sess.passive || sess.position === sess.sentPosition) return next(e)
     sess.sentPosition = sess.position
-    return next({ ...e, text: `${e.text}\n\n<tchm>${positionPath(sess)}</tchm>` })
+    return next({ ...e, text: `${e.text}\n\n${POINTER}` })
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

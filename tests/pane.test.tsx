@@ -1055,10 +1055,12 @@ test('the <tchm> pointer goes on a chat message only when it changed', async ($,
   await seed($, w.files, bigo)
   const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
   for (const key of TO_TRACE) await ui.press({ key })
-  expect(w.files[`${ROOT}/.teachme/.gitignore`]).toBe('env.json\nmetrics.jsonl\nstaging/\nposition.md\nsession.lock\n')
+  expect(w.files[`${ROOT}/.teachme/.gitignore`]).toBe('env.json\nmetrics.jsonl\nstaging/\nposition.md\nsession.lock\nCLAUDE.md\n')
+  // CLAUDE.md in that folder says what each file is, for an agent that opens one
+  expect(w.files[`${ROOT}/.teachme/CLAUDE.md`]).toMatch(/position\.md: what the learner sees[\s\S]*scripts\/<lesson>\.json[\s\S]*read\/<id>\.json[\s\S]*never counts as taught[\s\S]*Never changed/)
   await $.prompt.submit({ text: 'first question' } as never)
   await $.prompt.submit({ text: 'second question' } as never)
-  expect(sent.find(t => t.startsWith('first'))).toMatch(/<tchm>/)
+  expect(sent.find(t => t.startsWith('first'))).toBe('first question\n\n<tchm>.teachme/position.md</tchm>')
   expect(sent.find(t => t.startsWith('second'))).toBe('second question')
   // A pick half-way is not in the position; the finished answer is
   for (const key of ['choose-1', 'choose-3', 'choose-6', 'choose-8']) await ui.press({ key })

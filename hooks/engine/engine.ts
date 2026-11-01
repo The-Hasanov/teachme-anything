@@ -434,6 +434,8 @@ export function press(c: Ctx, p: Press): Out {
   if (!at && missing && action === 'retry' && !c.preparing) return { events: [], effects: [{ kind: 'prepare', after: '', seg: missing }] }
   if (!at) return NONE
   const { step } = at
+  // A finished lesson opens read-only from anywhere, a warm-up too; Back returns to the place, as it was
+  if (action?.startsWith('open:')) return openLesson(c, action.slice(5))
   if (at.warm) {
     if ('choose' in p) return answer(c, at, p.choose)
     if (!((action === 'next' && s.result[resultKey(c, at)]) || action === 'skip')) return NONE
@@ -448,7 +450,6 @@ export function press(c: Ctx, p: Press): Out {
     const i = lookBack(c, base.seg, base.step, -1)
     return i === undefined ? NONE : { events: [], effects: [{ kind: 'peek', seg: base.seg, step: i }] }
   }
-  if (action?.startsWith('open:')) return openLesson(c, action.slice(5))
   if (action === 'ask') return { events: [{ ts: c.now, type: 'aside', on: true, step: step.id }], effects: [{ kind: 'ask' }] }
   if (action === 'back') return { events: [{ ts: c.now, type: 'aside', on: false }], effects: [] }
   // A question of their own about the step, typed beside it while stepped aside
@@ -1151,6 +1152,19 @@ function awayText(c: Ctx): string {
   return ''
 }
 
+// Where the content on screen lives, relative to the course folder, so the tutor reads it instead of searching
+function filesText(c: Ctx, at: At | undefined): string {
+  const x = c.explore
+  const seg = c.peek && c.segments[c.peek.seg]
+  const parts = [
+    x?.reading ? `reading .teachme/read/${x.reading.id}.json sections[${Math.min(x.section, x.reading.sections.length - 1)}]` : '',
+    seg && c.peek ? `looked-back step .teachme/scripts/${seg.id}.json steps[${c.peek.step}] (id ${seg.steps[c.peek.step]?.id})` : '',
+    at ? `step .teachme/scripts/${at.seg.id}.json steps[${at.index}] (id ${at.step.id})` : '',
+    at?.seg.practice ? `practice ${at.seg.practice.dir}${at.step.open ? `/${at.step.open}` : ''}` : '',
+  ].filter(Boolean)
+  return parts.length ? `Files (for you, never to quote): ${parts.join(' · ')}.` : ''
+}
+
 export function snapshot(c: Ctx): string {
   const s = c.state
   if (!c.course) return 'No Teach Me course in this folder.'
@@ -1162,6 +1176,7 @@ export function snapshot(c: Ctx): string {
     `Course: ${c.course.subject} (goal: ${c.course.goal}). Stage: ${s.stage}.`,
     away,
     at ? `${away ? 'Their place in the lesson' : 'At'}: ${at.seg.title} · "${at.step.title}" (${at.step.kind}${at.warm ? ', warm-up' : ''}). Name steps by their title, never an id.` : '',
+    filesText(c, at),
     at && !away ? stepText(c, at) : '',
     at ? projectText(c, at) : '',
     intakeText(c),
