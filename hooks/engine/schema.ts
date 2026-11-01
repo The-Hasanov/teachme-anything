@@ -132,6 +132,39 @@ export function milestoneErrors(g: Segment, phase: Phase, before: readonly Segme
   return err
 }
 
+// Plain words, checked only when an author submits (lessons written before still load): a learner reads each
+// step once, without focus, in simple English. Short bodies and sentences, short choices, tasks as numbered steps
+export const PLAIN = { bodyWords: 60, sentenceWords: 18, choiceWords: 15 }
+const plainWords = (t: string) => t.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`]*`/g, 'x').split(/\s+/).filter(Boolean)
+// The first sentence over the limit, leaving out code blocks and table rows
+const longSentence = (t: string) => t.replace(/```[\s\S]*?```/g, ' ').split('\n').filter(l => !l.trim().startsWith('|')).join('\n')
+  .split(/(?<=[.!?:])\s+|\n+/).find(x => plainWords(x).length > PLAIN.sentenceWords)
+const tooLong = (at: string, t: string) => { const l = longSentence(t); return l ? [`${at}: a sentence over ${PLAIN.sentenceWords} words ("${l.trim().slice(0, 50)}…"); split it`] : [] }
+// A wall of text: a prose paragraph (not code, a list or a table) of more than `most` sentences
+const wall = (at: string, t: string, most: number) => {
+  const p = t.replace(/```[\s\S]*?```/g, '\n\n').split(/\n\s*\n/).map(x => x.trim())
+    .find(x => x && !/^([-*|>]|\d+[.)])\s/.test(x) && x.replace(/`[^`]*`/g, 'x').split(/(?<=[.!?])\s+/).filter(y => y.trim()).length > most)
+  return p ? [`${at}: a paragraph of more than ${most} sentences ("${p.slice(0, 40)}…"); split it, or make it a list`] : []
+}
+
+export function unclear(g: Segment): string[] {
+  const err: string[] = []
+  for (const s of g.steps) {
+    const at = `step ${s.id}`
+    if (plainWords(s.body).length > PLAIN.bodyWords) err.push(`${at}: body over ${PLAIN.bodyWords} words; keep one idea, move the rest to "more"`)
+    err.push(...tooLong(at, s.body))
+    const choice = s.choices?.find(c => !c.code && plainWords(c.text).length > PLAIN.choiceWords)
+    if (choice) err.push(`${at}: a choice over ${PLAIN.choiceWords} words; make it short`)
+    err.push(...wall(at, s.body, 2))
+    if (s.check && !s.drill && !(/\*\*Goal:\*\*/.test(s.body) && /^\s*1[.)]\s/m.test(s.body) && /\*\*Done when:\*\*/.test(s.body))) err.push(`${at}: a task has three blocks: "**Goal:** …", numbered steps ("1. Open …", "2. Write …", "3. Run …"), "**Done when:** …"`)
+  }
+  return err
+}
+
+// The same standard for a reading, on submit only: detailed is fine, long sentences are not
+export const unclearReading = (r: { sections: { title: string; body: string }[] }) =>
+  r.sections.flatMap((x, i) => [...tooLong(`sections[${i}] (${x.title})`, x.body), ...wall(`sections[${i}] (${x.title})`, x.body, 3)])
+
 export function validateSegment(g: any, course?: Course): string[] {
   const err: string[] = []
   if (g?.format !== 'teachme.script/1') return ['format must be "teachme.script/1"']

@@ -30,7 +30,10 @@
   };
   // A ``` fence, or a paragraph where every line is one `span`, is code: shown as the step's code is
   const codeBlock = (src, lang) => `<pre class="code"><code>${numbered(hl(src, lang?.toLowerCase()))}</code></pre>`;
-  const para = (p) => /^(`[^`\n]+`\n)+`[^`\n]+`$/.test(p.trim()) ? codeBlock(p.trim().split('\n').map(l => l.slice(1, -1)).join('\n')) : block(esc(p));
+  // A paragraph that changes kind line by line ("Do this:" then "1. Open …") is drawn as its parts, a list as a list
+  const kindOf = (l) => /^\|/.test(l) ? 't' : /^[-*] /.test(l) ? 'u' : /^\d+[.)] /.test(l) ? 'o' : /^&gt; ?/.test(l) ? 'q' : 'p';
+  const runs = (p) => p.split('\n').reduce((a, l) => { const k = kindOf(l.trim()); if (a.length && a[a.length - 1].k === k) a[a.length - 1].ls.push(l); else a.push({ k, ls: [l] }); return a; }, []);
+  const para = (p) => /^(`[^`\n]+`\n)+`[^`\n]+`$/.test(p.trim()) ? codeBlock(p.trim().split('\n').map(l => l.slice(1, -1)).join('\n')) : runs(esc(p)).map(r => block(r.ls.join('\n'))).join('');
   const md = (s) => String(s ?? '').split(/^```(\w*)[^\n]*\n([\s\S]*?)^```[ \t]*$/m).map((p, i, all) =>
     i % 3 === 2 ? codeBlock(p.replace(/\n$/, ''), all[i - 1]) : i % 3 === 0 ? p.split(/\n{2,}/).filter(b => b.trim()).map(para).join('') : '').join('');
   const COMMENT = { python: '#', py: '#', sh: '#', bash: '#', shell: '#', powershell: '#', ps1: '#', ruby: '#', yaml: '#', toml: '#', r: '#', sql: '--', js: '//', javascript: '//', ts: '//', typescript: '//', java: '//', c: '//', cpp: '//', cs: '//', go: '//', rust: '//', kotlin: '//', swift: '//', php: '//' };

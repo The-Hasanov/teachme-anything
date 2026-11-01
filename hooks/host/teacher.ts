@@ -6,10 +6,13 @@ export const ESCALATION_MODELS = ['sonnet', 'haiku']
 export const AUTHOR_MODEL = 'sonnet'
 const CLASSES: MistakeClass[] = ['slip', 'misconception', 'prereq', 'environment', 'misread']
 
+// One writing standard for everything a learner reads: lessons, readings, the course plan, feedback, the tutor's replies
+export const PLAIN_ENGLISH = 'Plain words: Basic English, common words, short sentences (at most 18 words), one idea per sentence, "you", active voice, no idioms or double negatives. A new term gets a few plain words saying what it is, then the same word every time. The learner reads it once, quickly, maybe without full focus (ADHD-friendly): the point comes first.'
+
 const RULES = `You are a programming tutor's diagnosis step. A learner tried a task and the automatic check did not pass in a way the lesson script did not anticipate.
 Find the most likely cause from the evidence. Classes: slip (careless error), misconception (wrong mental model), prereq (a missing earlier skill), environment (tool or setup problem, not the learner's fault), misread (did a different task than asked).
 Answer with JSON only: {"class": "...", "tag": "<a tag from the catalogue or null>", "feedback": "<at most 30 words to the learner: what you see, and what to look at next>"}.
-Feedback rules: plain words, address the learner as "you", name what the environment shows. Never give the full solution or the exact command that solves the task.`
+Feedback rules: ${PLAIN_ENGLISH} Name what the environment shows. Never give the full solution or the exact command that solves the task.`
 
 export type Diagnosis = { class: MistakeClass; tag?: string; feedback: string; ms: number; model: string; usage?: unknown }
 
@@ -59,7 +62,22 @@ You get the course (skill map, misconception catalogue), the learner's snapshot 
 Rules:
 - Teach, then test at once: a skill's first question or task comes right after a concept, compare, worked or stepper step with that "skill" that explains it, before the next idea is taught. A "why", feedback or "more" does not count: the learner sees those only after answering.
 - Connect the ideas: a teaching step says how the new idea relates to one the learner already knows. From the second segment on, at least one question or task combines the new skill with earlier ones in a realistic situation and lists those earlier skill ids in "uses".
-- 5 to 8 steps, one idea and one action each. body ≤ 80 words; extra detail in "more". Code ≤ 12 lines.
+- 5 to 8 steps, one idea and one action each. Code ≤ 12 lines.
+- ${PLAIN_ENGLISH} In lessons also:
+  - body at most 60 words; anything extra goes in "more". A question is one short line; each choice at most 15 words.
+  - Name a new term once, in bold, with a few plain words saying what it is. Then use that same word every time.
+  - Show, then tell: a tiny concrete example before the rule.
+  - Easy to scan: Markdown, a blank line between blocks, paragraphs of at most 2 sentences, lists for steps or parts, names and code in \`backticks\`, code longer than one line in "code", not in the body.
+  - A concept step: one line with the idea; the example in "code"; one line saying what to notice.
+  - A task, always this shape, with blank lines between the three blocks:
+    "**Goal:** <one sentence: what works when you are done>.
+
+    1. Open \`src/lib.rs\`.
+    2. <one action>.
+    3. Run \`cargo test\`.
+
+    **Done when:** <what they see, e.g. all tests pass>."
+  - Nothing untaught in a task: every symbol and keyword in its code and scaffold (like &, ?, impl, match arms with fields) was taught in an earlier step or lesson, or is explained in that step in one line.
 - Every choice has a "why". Questions have exactly one key (0-based). Anticipate the likely wrong answers in "wrong": class, misconception tag, short feedback, and a drill step (drill: true) as "branch" for a misconception.
 - Real actions use "check" with read-only "probes" and "reference" commands that solve the task. The engine runs the reference only in a scratch copy to verify; it never shows it. Probes must fail before the task and pass after.
 - A probe runs the work: its tests, the program, or the state it leaves. Never pass a task by searching its source for words. If nothing on this machine can run it, ask a question about it instead of a task.
@@ -82,6 +100,7 @@ export const GENERIC_INTAKE = [
 export const SETUP_ADAPTERS = ['git', 'python', 'node', 'cargo', 'php', 'go', 'dotnet', 'java', 'docker', 'podman', 'practice', 'verify']
 
 const PROJECT_RULES = `Build-with-me rules (the learner and the system build one real project together, milestone by milestone):
+- Every text the learner reads follows the lesson rules: ${PLAIN_ENGLISH}
 - Each milestone is one segment whose practice.dir is the project folder. The learner's code there persists from one milestone to the next.
 - practice.scaffold rebuilds the project as it stands at the start of this milestone, with the reference solutions of earlier milestones. It is used only when the folder is missing and to check the milestone in a scratch copy.
 - practice.adds is the system's part, written into the learner's folder when the milestone starts: new files, boilerplate, wiring and this milestone's tests. It never writes a file the learner writes (any "open" file of the project).
@@ -102,6 +121,7 @@ const codebaseRules = (root: string) => `The subject is the project in ${root}: 
 export function courseTask(subject: string, env: string, example: { course: Course; segment: Segment }, background?: string, project?: { title: string; pitch: string }, codebase?: string) {
   return [
     `A learner asked: "teach me ${subject}". There is no course for it yet. Write its plan: the lessons are written later, one at a time, for this learner.`,
+    `Every text the learner reads (goal, skill and phase titles, placement questions and choices): ${PLAIN_ENGLISH} Titles are 2 to 6 plain words.`,
     codebase ? codebaseRules(codebase.replace(/\\/g, '/')) : '',
     project ? `They want to build "${project.title}": ${project.pitch}. Shape the course toward it: its last phase is that project, with "project": "practice/<name>", a one-sentence "brief" and 2 to 8 milestone segment ids. Earlier phases teach what the project needs.\n${PROJECT_RULES}` : '',
     background ? `They said what they already know: "${background}". Skip that, start where it ends, and compare with it.` : '',
@@ -145,6 +165,7 @@ export function authorTask(course: Course, example: Segment | undefined, snapsho
 const READING_RULES = `This is a reading for Explore, not a lesson: the learner chose to study this topic freely. No questions, no tasks, no checks.
 - Detailed, precise and complete: 4 to 10 sections, one idea each, in depth. Cover how it works and why, its parts and their exact behaviour, how it is used in real work, edge cases and common mistakes, and where it connects to neighbouring topics.
 - Each body is Markdown, at most 300 words: short paragraphs, lists for steps or options, a table when comparing. Bold a term where it is defined.
+- Detailed, and still: ${PLAIN_ENGLISH}
 - Precise: exact names, defaults, limits and outputs. When the behaviour changed between versions, say which version a statement holds for.
 - Examples: a section's "code" is {lang, source, run?}, up to 30 lines; leave "code" out when a section has none. A python, javascript or sql example has code.run {file, argv, out}: it is run on the learner's machine, and out must be exactly what it prints. Other code is shown, not run. Use "python", never "python3".
 - Sources: every section names 1 or 2 pages it rests on, official documentation, the specification or the standard, as {title, url} with an https url you are sure exists. Each url is checked; one that does not answer is rejected.

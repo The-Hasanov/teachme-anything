@@ -46,6 +46,9 @@ assert.match(h, /<h3>Why<\/h3>/);
 assert.match(h, /<ul class="doc"><li>one <code>a&#42;b<\/code><\/li><li><em>two<\/em><\/li><\/ul>/);
 assert.match(h, /<ol class="doc"><li>first<\/li><li>second<\/li><\/ol>/);
 assert.match(h, /<blockquote>quoted<\/blockquote>/);
+// A list right after a sentence, with no blank line, is still a list
+const task = draw({ kind: 'exercise', title: 'T', actions: [], body: '**Goal:** it works.\n1. Open `a.rs`.\n2. Run `cargo test`.\n**Done when:** tests pass.' });
+assert.match(task, /<p><strong>Goal:<\/strong> it works\.<\/p><ol class="doc"><li>Open <code>a\.rs<\/code>\.<\/li><li>Run <code>cargo test<\/code>\.<\/li><\/ol><p><strong>Done when:<\/strong> tests pass\.<\/p>/);
 assert.match(h, /<a href="https:\/\/example\.com">docs<\/a>/);
 assert.ok(!/javascript:/.test(h.replace(/\[bad\]\(javascript:alert\(1\)\)/, '')), 'only https links');
 assert.match(h, /<p>2 \* 3 \* 4<\/p>/);
