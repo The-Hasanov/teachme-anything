@@ -72,7 +72,7 @@ export function append($: EngineInterface, log: Log, events: readonly object[]) 
 export async function install($: EngineInterface, root: string, course: Course, segments: readonly Segment[]) {
   await $.fs.write(`${root}/${DIR}/course.json`, JSON.stringify(course, null, 2) + '\n')
   for (const g of segments) await $.fs.write(`${root}/${DIR}/scripts/${g.id}.json`, JSON.stringify(g, null, 2) + '\n')
-  await $.fs.write(`${root}/${DIR}/.gitignore`, 'env.json\nmetrics.jsonl\nstaging/\n')
+  await $.fs.write(`${root}/${DIR}/.gitignore`, 'env.json\nmetrics.jsonl\nposition.md\nstaging/\n')
   await $.fs.write(`${root}/${DIR}/.gitattributes`, 'log/*.jsonl merge=union\n')
 }
 

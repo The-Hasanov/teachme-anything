@@ -76,6 +76,9 @@ type Session = {
   rewrite?: Set<string>
   // Ask: the prompt sent to the agent for this step, the turn that answers it, and its answer
   asking?: { step: string; prompt: string; question?: string; turn?: string; answer?: string }
+  // The position as last written to .teachme/position.md, and as last pointed to from a chat message
+  position?: string
+  sentPosition?: string
 }
 
 let sess: Session | undefined
@@ -137,6 +140,16 @@ async function refresh($: EngineInterface, layout?: LayoutOp) {
   const sc = screen(c)
   await update($, view, () => sc)
   if (s.vscode) void sendView($, s.vscode, sc, layout, dashboard(c))
+  await writePosition($, s, c)
+}
+
+// Where the learner is, in one file kept up to date, so the chat carries a pointer and not the whole text
+const positionPath = (s: Session) => `${s.root}/${DIR}/position.md`
+async function writePosition($: EngineInterface, s: Session, c: Ctx) {
+  const text = snapshot(c)
+  if (text === s.position) return
+  s.position = text
+  await $.fs.write(positionPath(s), `${text}\n`).catch(err => $.ui.log(`teachme: position write failed: ${err}`, { to: 'debug' }))
 }
 
 async function commit($: EngineInterface, out: Out) {
@@ -240,7 +253,7 @@ async function ask($: EngineInterface, question?: string) {
   const prompt = [
     question ? `About the Teach Me step "${at.step.title}": ${question}` : `Explain the idea behind the Teach Me step "${at.step.title}" in more depth.`,
     'Follow the explain-step way: never give away an answer the learner has not found yet. Up to 6 short sentences, plain words, no headings.',
-    `<teachme-position>\n${snapshot(await ctx($))}\n</teachme-position>`,
+    `<teachme-position>Read ${positionPath(s)} first: the step's text, code, choices and what they answered.</teachme-position>`,
   ].join('\n\n')
   s.asking = { step: at.step.id, prompt, ...(question ? { question } : {}) }
   await refresh($)
@@ -946,7 +959,7 @@ export function lessonSection() {
   return {
     id: `${PLUGIN}:lesson`, scope: 'session' as const,
     text: 'Teach Me course in this folder. The lesson view (engine) runs every step, answer and hint; never repeat its content. ' +
-      'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists; their position is in <teachme-position> on their message. ' +
+      'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists; their current position is always in .teachme/position.md, kept up to date (read it when the message is about the lesson; a message notes when it changed). ' +
       'End by pointing them back to the step in the lesson view. ' +
       'When they want to study a topic in depth or freely, call explore with it instead of explaining at length. ' +
       'Never edit .teachme/ or practice/.',
@@ -1045,12 +1058,19 @@ export const registerLesson: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     if (!sess?.course || !e.text || e.text.startsWith('<')) return next(e)
-    if (sess.state.stage === 'lesson' && !sess.state.aside) {
-      const at = current(await ctx($))
+    const c = await ctx($)
+    // A question asked while Explore, Progress or an earlier step is open is not about the step in the lesson
+    const onStep = !c.explore && !c.build && !c.progress && !c.peek
+    if (sess.state.stage === 'lesson' && !sess.state.aside && onStep) {
+      const at = current(c)
       await commit($, { events: [{ ts: await $.clock.now(), type: 'aside', on: true, ...(at ? { step: at.step.id } : {}) }], effects: [] })
     }
-    const reply = sess.state.stage === 'lesson' ? '\nReply in at most 3 short sentences, no headings or lists; the lesson view keeps their place.' : ''
-    return next({ ...e, text: `${e.text}\n\n<teachme-position>\n${snapshot(await ctx($))}${reply}\n</teachme-position>` })
+    // The position lives in one file; the message only says when it changed since the last one
+    await writePosition($, sess, await ctx($))
+    if (sess.position === sess.sentPosition) return next(e)
+    sess.sentPosition = sess.position
+    const reply = sess.state.stage === 'lesson' && onStep ? ' Reply in at most 3 short sentences, no headings or lists; the lesson view keeps their place.' : ''
+    return next({ ...e, text: `${e.text}\n\n<teachme-position>Their position changed: read ${positionPath(sess)} if this is about the lesson.${reply}</teachme-position>` })
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

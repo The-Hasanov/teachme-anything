@@ -1121,23 +1121,42 @@ const levelText = (c: Ctx) => {
   ].filter(Boolean).join('\n')
 }
 
+function awayText(c: Ctx): string {
+  const x = c.explore
+  if (x?.writing) return `Now: Explore, a reading on "${x.writing}" is being written. Nothing there is graded.`
+  if (x?.reading) {
+    const i = Math.min(x.section, x.reading.sections.length - 1)
+    return `Now: reading "${x.reading.topic}" in Explore, section ${i + 1} of ${x.reading.sections.length} ("${x.reading.sections[i]?.title}"). Nothing there is graded; answer about the reading freely.`
+  }
+  if (x) return 'Now: Explore, choosing a topic to read. Nothing there is graded.'
+  if (c.build) return 'Now: choosing a project to build together.'
+  if (c.progress) return 'Now: looking at their progress.'
+  const seg = c.peek && c.segments[c.peek.seg]
+  const step = c.peek && seg?.steps[c.peek.step]
+  if (seg && step) return `Now: looking back at "${step.title}" in ${seg.title}, read-only.`
+  return ''
+}
+
 export function snapshot(c: Ctx): string {
   const s = c.state
   if (!c.course) return 'No Teach Me course in this folder.'
   const at = current(c)
   const weak = keepSharp(c).map((w: Weakness) => `${w.tag ?? w.key} (${w.cls}, ${w.count}×, ${w.status})`)
+  // The lesson view may show something other than the step: say that, and keep the step's own lines out
+  const away = awayText(c)
   return [
     `Course: ${c.course.subject} (goal: ${c.course.goal}). Stage: ${s.stage}.`,
-    at ? `At: ${at.seg.title} · "${at.step.title}" (${at.step.kind}${at.warm ? ', warm-up' : ''}). Name steps by their title, never an id.` : '',
-    at ? stepText(c, at) : '',
+    away,
+    at ? `${away ? 'Their place in the lesson' : 'At'}: ${at.seg.title} · "${at.step.title}" (${at.step.kind}${at.warm ? ', warm-up' : ''}). Name steps by their title, never an id.` : '',
+    at && !away ? stepText(c, at) : '',
     at ? projectText(c, at) : '',
     intakeText(c),
     placementText(c),
     levelText(c),
     weak.length ? `Keep sharp: ${weak.join(', ')}.` : '',
     s.notes.length ? `Notes from earlier sessions: ${s.notes.slice(-5).join(' · ')}` : '',
-    s.aside ? 'The learner stepped aside to ask a question; their place in the lesson is kept.' : '',
-    at && canSkip(c, at) ? `They have tried this ${c.state.tries[sk(at)]} times, so they may move on now: the lesson's "Move on for now" button. The skill comes back in a later warm-up. If they want to skip, say that and nothing more.` : '',
-    at && !s.solved[sk(at)] && (at.step.check || at.step.choices) ? `They have not solved this step yet${at.step.unseen ? ' (a transfer task that proves the skill)' : ''}: explain the idea, never the command or answer that solves it.` : '',
+    s.aside && !away ? 'The learner stepped aside to ask a question; their place in the lesson is kept.' : '',
+    at && !away && canSkip(c, at) ? `They have tried this ${c.state.tries[sk(at)]} times, so they may move on now: the lesson's "Move on for now" button. The skill comes back in a later warm-up. If they want to skip, say that and nothing more.` : '',
+    at && !away && !s.solved[sk(at)] && (at.step.check || at.step.choices) ? `They have not solved this step yet${at.step.unseen ? ' (a transfer task that proves the skill)' : ''}: explain the idea, never the command or answer that solves it.` : '',
   ].filter(Boolean).join('\n')
 }
