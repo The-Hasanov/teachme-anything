@@ -253,7 +253,7 @@ async function ask($: EngineInterface, question?: string) {
   const prompt = [
     question ? `About the Teach Me step "${at.step.title}": ${question}` : `Explain the idea behind the Teach Me step "${at.step.title}" in more depth.`,
     'Follow the explain-step way: never give away an answer the learner has not found yet. Up to 6 short sentences, plain words, no headings.',
-    `<teachme>Read ${positionPath(s)} first: the step's text, code, choices and what they answered.</teachme>`,
+    `<tchm>${positionPath(s)}</tchm>`,
   ].join('\n\n')
   s.asking = { step: at.step.id, prompt, ...(question ? { question } : {}) }
   await refresh($)
@@ -959,7 +959,7 @@ export function lessonSection() {
   return {
     id: `${PLUGIN}:lesson`, scope: 'session' as const,
     text: 'Teach Me course in this folder. The lesson view (engine) runs every step, answer and hint; never repeat its content. ' +
-      'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists; their current position is always in .teachme/position.md, kept up to date (read it when the message is about the lesson; a message notes when it changed). ' +
+      'Answer the learner\'s own question in at most 3 short sentences, plain words, no headings or lists; their current position is always in .teachme/position.md (read it when the message is about the lesson); <tchm>path</tchm> on a message means it changed. ' +
       'End by pointing them back to the step in the lesson view. ' +
       'When they want to study a topic in depth or freely, call explore with it instead of explaining at length. ' +
       'Never edit .teachme/ or practice/.',
@@ -1069,8 +1069,7 @@ export const registerLesson: Register = on => {
     await writePosition($, sess, await ctx($))
     if (sess.position === sess.sentPosition) return next(e)
     sess.sentPosition = sess.position
-    const reply = sess.state.stage === 'lesson' && onStep ? ' Reply in at most 3 short sentences, no headings or lists; the lesson view keeps their place.' : ''
-    return next({ ...e, text: `${e.text}\n\n<teachme>Their position changed: read ${positionPath(sess)} if this is about the lesson.${reply}</teachme>` })
+    return next({ ...e, text: `${e.text}\n\n<tchm>${positionPath(sess)}</tchm>` })
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
