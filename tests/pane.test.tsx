@@ -607,7 +607,7 @@ test('#14 Ask sends the step to the agent, and its explanation shows under the s
 
   await ui.press({ key: 'act-ask' })
   expect(sent).toHaveLength(1)
-  expect(sent[0]).toMatch(/Explain the idea behind the Teach Me step "Big-O counts growth"[\s\S]*<teachme-position>Read \S*\.teachme\/position\.md first/)
+  expect(sent[0]).toMatch(/Explain the idea behind the Teach Me step "Big-O counts growth"[\s\S]*<teachme>Read \S*\.teachme\/position\.md first/)
   // the chat gets a pointer; the step itself is in the file
   expect(Object.entries(w.files).find(([k]) => k.endsWith('.teachme/position.md'))?.[1]).toMatch(/At: .*Big-O counts growth/)
   expect(await texts()).toMatch(/Explaining this step…/)
@@ -1041,7 +1041,7 @@ test('#10 a VS Code window driven by a newer session: this one stops drawing the
   await ui.unmount()
 })
 
-test('<teachme-position> goes on a chat message only when it changed', async ($, on) => {
+test('the <teachme> pointer goes on a chat message only when it changed', async ($, on) => {
   const w: { files: Record<string, string> } = world(on, (argv, cwd) => machine(w.files)(argv, cwd))
   const sent: string[] = []
   on('prompt.submit', (_, e) => { sent.push(e.text ?? ''); return { text: e.text ?? '' } })
@@ -1052,11 +1052,11 @@ test('<teachme-position> goes on a chat message only when it changed', async ($,
   for (const key of TO_TRACE) await ui.press({ key })
   await $.prompt.submit({ text: 'first question' } as never)
   await $.prompt.submit({ text: 'second question' } as never)
-  expect(sent.find(t => t.startsWith('first'))).toMatch(/<teachme-position>/)
+  expect(sent.find(t => t.startsWith('first'))).toMatch(/<teachme>/)
   expect(sent.find(t => t.startsWith('second'))).toBe('second question')
   // A pick half-way is not in the position; the finished answer is
   for (const key of ['choose-1', 'choose-3', 'choose-6', 'choose-8']) await ui.press({ key })
   await $.prompt.submit({ text: 'third question' } as never)
-  expect(sent.find(t => t.startsWith('third'))).toMatch(/<teachme-position>/)
+  expect(sent.find(t => t.startsWith('third'))).toMatch(/<teachme>/)
   await ui.unmount()
 })

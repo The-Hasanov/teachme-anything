@@ -253,7 +253,7 @@ async function ask($: EngineInterface, question?: string) {
   const prompt = [
     question ? `About the Teach Me step "${at.step.title}": ${question}` : `Explain the idea behind the Teach Me step "${at.step.title}" in more depth.`,
     'Follow the explain-step way: never give away an answer the learner has not found yet. Up to 6 short sentences, plain words, no headings.',
-    `<teachme-position>Read ${positionPath(s)} first: the step's text, code, choices and what they answered.</teachme-position>`,
+    `<teachme>Read ${positionPath(s)} first: the step's text, code, choices and what they answered.</teachme>`,
   ].join('\n\n')
   s.asking = { step: at.step.id, prompt, ...(question ? { question } : {}) }
   await refresh($)
@@ -1070,7 +1070,7 @@ export const registerLesson: Register = on => {
     if (sess.position === sess.sentPosition) return next(e)
     sess.sentPosition = sess.position
     const reply = sess.state.stage === 'lesson' && onStep ? ' Reply in at most 3 short sentences, no headings or lists; the lesson view keeps their place.' : ''
-    return next({ ...e, text: `${e.text}\n\n<teachme-position>Their position changed: read ${positionPath(sess)} if this is about the lesson.${reply}</teachme-position>` })
+    return next({ ...e, text: `${e.text}\n\n<teachme>Their position changed: read ${positionPath(sess)} if this is about the lesson.${reply}</teachme>` })
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
