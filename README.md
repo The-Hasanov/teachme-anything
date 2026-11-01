@@ -41,6 +41,21 @@ An AI tutor plugin for [Claude Code](https://claude.com/claude-code). It writes 
 | VS Code | the extension | a view in the secondary side bar |
 | Terminal | nothing extra | a pane beside the chat |
 
+## Skills
+
+Run with `/teachme-anything:<skill>`, or just say what you want.
+
+| Skill | What it does |
+|---|---|
+| `teach-codebase` | A course on the repo you are in, with exercises checked by its own tests |
+| `build-with-me` | Learn by building a project together, milestone by milestone |
+| `explore` | Read any topic in depth, no questions or tests |
+| `explain-step` | Explains the current step without giving away the answer |
+| `learning-progress` | Accuracy, first-try rate, hints, time and your learning curve |
+| `strengths-weaknesses` | What you are strong at and what to practise next |
+| `install-vscode` | Builds and installs the VS Code lesson view |
+| `doctor` | Finds why Teach Me is not working and fixes it |
+
 ## Privacy
 
 Everything stays on your machine. Nothing is installed without your click, and the tutor never edits your code.
