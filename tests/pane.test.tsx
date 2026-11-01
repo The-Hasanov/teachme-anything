@@ -1055,7 +1055,7 @@ test('the <tchm> pointer goes on a chat message only when it changed', async ($,
   await seed($, w.files, bigo)
   const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
   for (const key of TO_TRACE) await ui.press({ key })
-  expect(w.files[`${ROOT}/.teachme/.gitignore`]).toBe('env.json\nmetrics.jsonl\nstaging/\nposition.md\n')
+  expect(w.files[`${ROOT}/.teachme/.gitignore`]).toBe('env.json\nmetrics.jsonl\nstaging/\nposition.md\nsession.lock\n')
   await $.prompt.submit({ text: 'first question' } as never)
   await $.prompt.submit({ text: 'second question' } as never)
   expect(sent.find(t => t.startsWith('first'))).toMatch(/<tchm>/)
@@ -1065,4 +1065,49 @@ test('the <tchm> pointer goes on a chat message only when it changed', async ($,
   await $.prompt.submit({ text: 'third question' } as never)
   expect(sent.find(t => t.startsWith('third'))).toMatch(/<tchm>/)
   await ui.unmount()
+})
+
+test('a second session on the same course: warned at start, takes over, steps back for a newer one, frees the folder at the end', async ($, on) => {
+  const w = world(on)
+  const toasts: string[] = []
+  const sent: string[] = []
+  on('ui.toast', (_, e) => { toasts.push((e as { text: string }).text); return { value: undefined } })
+  on('session.id', () => ({ value: 's-new' }))
+  on('session.end', () => ({ sessionId: 's-new' }))
+  on('prompt.submit', (_, e) => { sent.push(e.text ?? ''); return { text: e.text ?? '' } })
+  agents($, on)
+  const T0 = Date.parse('2026-10-27T10:00:00Z')
+  const lock = `${ROOT}/.teachme/session.lock`
+  w.files[`${ROOT}/.teachme/course.json`] = JSON.stringify(bigo.course)
+  for (const g of bigo.segments) w.files[`${ROOT}/.teachme/scripts/${g.id}.json`] = JSON.stringify(g)
+  w.files[lock] = JSON.stringify({ id: 's-old', beat: T0 - 5000 })
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  expect(toasts).toEqual([expect.stringMatching(/another Claude Code session already has this course open/)])
+  expect(JSON.parse(w.files[lock]!).id).toBe('s-new')
+  // A newer session takes the folder: this one steps back and points the chat nowhere
+  w.files[lock] = JSON.stringify({ id: 's-newer', beat: T0 + 10_000 })
+  await w.clock.advance(10_000)
+  expect(toasts.at(-1)).toMatch(/a newer Claude Code session has this course open/)
+  await $.prompt.submit({ text: 'a question' } as never)
+  expect(sent.at(-1)).toBe('a question')
+  // It ends and frees the lock: this one drives again
+  w.files[lock] = ''
+  await w.clock.advance(10_000)
+  expect(JSON.parse(w.files[lock]!).id).toBe('s-new')
+  await $.session.end({ reason: 'exit' } as never)
+  expect(w.files[lock]).toBe('')
+})
+
+test('a lock left by a session that crashed is stale: no warning, and it never blocks', async ($, on) => {
+  const w = world(on)
+  const toasts: string[] = []
+  on('ui.toast', (_, e) => { toasts.push((e as { text: string }).text); return { value: undefined } })
+  on('session.id', () => ({ value: 's-new' }))
+  agents($, on)
+  w.files[`${ROOT}/.teachme/course.json`] = JSON.stringify(bigo.course)
+  for (const g of bigo.segments) w.files[`${ROOT}/.teachme/scripts/${g.id}.json`] = JSON.stringify(g)
+  w.files[`${ROOT}/.teachme/session.lock`] = JSON.stringify({ id: 's-crashed', beat: Date.parse('2026-10-27T10:00:00Z') - 60_000 })
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  expect(toasts).toEqual([])
+  expect(JSON.parse(w.files[`${ROOT}/.teachme/session.lock`]!).id).toBe('s-new')
 })
