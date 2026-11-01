@@ -696,3 +696,17 @@ test('a warm-up asks only what a lesson taught: never a drill the learner did no
   const unseen = { ...l.c, state: { ...l.c.state, idk: {}, result: {} } }
   expect(dueItems(unseen)).toEqual([])
 })
+
+test('a finished lesson opens read-only during a warm-up too, and the position names the files on screen', () => {
+  const l = learner()
+  l.toLesson()
+  l.c.segments['merge-1'] = { ...git.branches1, id: 'merge-1', title: 'Merging' }
+  l.take({ events: [{ ts: l.c.now, type: 'enter', seg: 'merge-1', step: 0 }], effects: [] })
+  l.take({ events: [{ ts: l.c.now, type: 'warm', items: [{ seg: 'branches-1', step: 'b2', key: 'skill:branch-model' }] }], effects: [] })
+  expect(current(l.c)?.warm).toBeTruthy()
+  expect(snapshot(l.c)).toMatch(/Files \(for you, never to quote\): step \.teachme\/scripts\/branches-1\.json steps\[1\] \(id b2\)/)
+  expect(press(l.c, { action: 'open:branches-1' }).effects).toEqual([{ kind: 'peek', seg: 'branches-1', step: 0 }])
+  expect(snapshot({ ...l.c, peek: { seg: 'branches-1', step: 0 } })).toMatch(/looked-back step \.teachme\/scripts\/branches-1\.json steps\[0\] \(id b1\)/)
+  const reading = { id: 'r', topic: 'Branches in depth', sections: [{ title: 'One' }, { title: 'Two' }] }
+  expect(snapshot({ ...l.c, explore: { reading, section: 1, library: [], suggest: [] } as never })).toMatch(/reading \.teachme\/read\/r\.json sections\[1\]/)
+})

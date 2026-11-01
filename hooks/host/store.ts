@@ -77,7 +77,26 @@ export async function install($: EngineInterface, root: string, course: Course, 
 }
 
 // This machine's session files, never shared through git. A course installed before them gets them in .gitignore
-const LOCAL = ['position.md', 'session.lock']
+const LOCAL = ['position.md', 'session.lock', 'CLAUDE.md']
+
+// What each file here is, for an agent that opens one; rewritten each session, so it follows the plugin version
+const GUIDE = `# .teachme/: the Teach Me course in this folder
+
+Written by the Teach Me engine. Read anything here; never edit it (only the doctor agent repairs it).
+
+- position.md: what the learner sees in the lesson view right now, rewritten on every change. Read it before answering about the lesson. \`<tchm>.teachme/position.md</tchm>\` at the end of a message means it changed. Its Files line names the lesson step, reading section and practice file on screen.
+- course.json: the course: goal, skills and their misconceptions, phases with their lessons in order, setup.
+- scripts/<lesson>.json: one lesson's steps (steps[i], each with an id). Name steps to the learner by title, never by id.
+- read/<id>.json: Explore readings (sections[i]). Optional reading: never counts as taught.
+- log/<device>-<month>.jsonl: the learner's history (places, answers, readings), the source of truth. Never changed.
+- metrics.jsonl: presses and timings. env.json: this machine's tools. session.lock: which Claude Code session drives the course.
+- ../practice/: the learner's own exercise work. Never edit it.
+
+To show the learner a page (a lesson they reached, a reading's contents, their path or progress), call the Teach Me open tool.
+`
+export async function writeGuide($: EngineInterface, root: string) {
+  await $.fs.write(`${root}/${DIR}/CLAUDE.md`, GUIDE).catch(() => undefined)
+}
 export async function ignoreLocal($: EngineInterface, root: string) {
   const path = `${root}/${DIR}/.gitignore`
   const text = await $.fs.read(path).catch(() => undefined)
