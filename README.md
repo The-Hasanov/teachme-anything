@@ -14,7 +14,7 @@ An AI tutor plugin for [Claude Code](https://claude.com/claude-code). It writes 
    /plugin install teachme-anything --marketplace The-Hasanov/teachme-anything
    ```
 
-2. In an empty folder, tell Claude Code: **"teach me &lt;subject&gt;"**.
+2. In an empty folder, tell Claude Code: **"teach me &lt;subject&gt;"**, or use one of the [skills](#skills).
 
 3. Optional, for VS Code: build and install the extension.
 
