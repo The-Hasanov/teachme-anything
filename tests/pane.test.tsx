@@ -494,6 +494,8 @@ test('Explore with no course: open a topic, the reading is checked before it is 
   const log = Object.entries(files).find(([f]) => f.includes('/.teachme/log/'))?.[1] ?? ''
   expect(log.trim().split('\n').map(l => JSON.parse(l)).map(e => `${e.type}:${e.reading}:${e.section}`)).toEqual(['read:rust-ownership:0', 'read:rust-ownership:1', 'read:rust-ownership:2', 'read:rust-ownership:2'])
   expect(calls.model).toBe(0)
+  // No course here: no position file either
+  expect(Object.keys(files).some(f => f.endsWith('/position.md'))).toBe(false)
   await ui.unmount()
 })
 
@@ -608,6 +610,7 @@ test('#14 Ask sends the step to the agent, and its explanation shows under the s
   await ui.press({ key: 'act-ask' })
   expect(sent).toHaveLength(1)
   expect(sent[0]).toMatch(/Explain the idea behind the Teach Me step "Big-O counts growth"[\s\S]*<tchm>\S*\.teachme\/position\.md<\/tchm>/)
+  expect(sent[0]!.match(/<tchm>/g)).toHaveLength(1)
   // the chat gets a pointer; the step itself is in the file
   expect(Object.entries(w.files).find(([k]) => k.endsWith('.teachme/position.md'))?.[1]).toMatch(/At: .*Big-O counts growth/)
   expect(await texts()).toMatch(/Explaining this step…/)
@@ -1047,9 +1050,12 @@ test('the <tchm> pointer goes on a chat message only when it changed', async ($,
   on('prompt.submit', (_, e) => { sent.push(e.text ?? ''); return { text: e.text ?? '' } })
   agents($, on)
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  // A folder from before position.md: its .gitignore gets the line, once
+  w.files[`${ROOT}/.teachme/.gitignore`] = 'env.json\nmetrics.jsonl\nstaging/\n'
   await seed($, w.files, bigo)
   const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
   for (const key of TO_TRACE) await ui.press({ key })
+  expect(w.files[`${ROOT}/.teachme/.gitignore`]).toBe('env.json\nmetrics.jsonl\nstaging/\nposition.md\n')
   await $.prompt.submit({ text: 'first question' } as never)
   await $.prompt.submit({ text: 'second question' } as never)
   expect(sent.find(t => t.startsWith('first'))).toMatch(/<tchm>/)

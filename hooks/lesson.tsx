@@ -13,7 +13,7 @@ import { milestoneErrors, replanErrors, untaught, validateCourse, validateProjec
 import { MANUAL, backUpScaffold, installPlan, isStaleScaffold, isTool, output, probeEnv, removeLesson, runCommand, runProbes, scaffold } from './host/adapters'
 import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
-import { DIR, append, hasCourse, install, load, newLog, progressMarkdown } from './host/store'
+import { DIR, append, hasCourse, ignorePosition, install, load, newLog, progressMarkdown } from './host/store'
 import type { Log } from './host/store'
 import { AUTHOR_MODEL, AUTHOR_PROMPT, DOCTOR_PROMPT, GENERIC_INTAKE, SETUP_ADAPTERS, authorTask, courseTask, diagnose, projectTask, readingTask } from './host/teacher'
 import { verifySegment } from './host/verify'
@@ -140,15 +140,20 @@ async function refresh($: EngineInterface, layout?: LayoutOp) {
   const sc = screen(c)
   await update($, view, () => sc)
   if (s.vscode) void sendView($, s.vscode, sc, layout, dashboard(c))
-  await writePosition($, s, c)
+  // Best effort: a button press does not wait for it
+  void writePosition($, s, c)
 }
 
-// Where the learner is, in one file kept up to date, so the chat carries a pointer and not the whole text
+// Where the learner is, in one file kept up to date, so the chat carries a pointer and not the whole text.
+// Only in a course folder: Explore or Build with me in an empty one leaves no .teachme/ behind
 const positionPath = (s: Session) => `${s.root}/${DIR}/position.md`
 async function writePosition($: EngineInterface, s: Session, c: Ctx) {
+  if (!s.course) return
   const text = snapshot(c)
   if (text === s.position) return
+  const first = s.position === undefined
   s.position = text
+  if (first) await ignorePosition($, s.root)
   await $.fs.write(positionPath(s), `${text}\n`).catch(err => $.ui.log(`teachme: position write failed: ${err}`, { to: 'debug' }))
 }
 
@@ -257,6 +262,8 @@ async function ask($: EngineInterface, question?: string) {
   ].join('\n\n')
   s.asking = { step: at.step.id, prompt, ...(question ? { question } : {}) }
   await refresh($)
+  // This prompt carries the pointer: the chat hook it passes through, and the next message, need not add one
+  s.sentPosition = s.position
   void metric($, { kind: 'ask', step: at.step.id, own: !!question })
   const r = await $.prompt.submit({ text: prompt })
   if (r.drop && s.asking?.prompt === prompt) { s.asking = { ...s.asking, answer: `Ask in the chat. Your place here is kept. (${r.drop})` }; await refresh($) }

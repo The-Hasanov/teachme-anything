@@ -1157,6 +1157,6 @@ export function snapshot(c: Ctx): string {
     s.notes.length ? `Notes from earlier sessions: ${s.notes.slice(-5).join(' · ')}` : '',
     s.aside && !away ? 'The learner stepped aside to ask a question; their place in the lesson is kept.' : '',
     at && !away && canSkip(c, at) ? `They have tried this ${c.state.tries[sk(at)]} times, so they may move on now: the lesson's "Move on for now" button. The skill comes back in a later warm-up. If they want to skip, say that and nothing more.` : '',
-    at && !away && !s.solved[sk(at)] && (at.step.check || at.step.choices) ? `They have not solved this step yet${at.step.unseen ? ' (a transfer task that proves the skill)' : ''}: explain the idea, never the command or answer that solves it.` : '',
+    at && !s.solved[sk(at)] && (at.step.check || at.step.choices) ? `They have not solved this step yet${at.step.unseen ? ' (a transfer task that proves the skill)' : ''}: explain the idea, never the command or answer that solves it.` : '',
   ].filter(Boolean).join('\n')
 }

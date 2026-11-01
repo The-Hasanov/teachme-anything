@@ -76,6 +76,13 @@ export async function install($: EngineInterface, root: string, course: Course, 
   await $.fs.write(`${root}/${DIR}/.gitattributes`, 'log/*.jsonl merge=union\n')
 }
 
+// A course installed before position.md existed: add it to that folder's .gitignore, once
+export async function ignorePosition($: EngineInterface, root: string) {
+  const path = `${root}/${DIR}/.gitignore`
+  const text = await $.fs.read(path).catch(() => undefined)
+  if (text !== undefined && !/^position\.md$/m.test(text)) await $.fs.write(path, `${text.replace(/\n?$/, '\n')}position.md\n`)
+}
+
 export function progressMarkdown(course: Course, s: LearnerState, now: number): string {
   const rows = course.skills.map(k => `| \`${k.id}\` | ${k.title} | ${skillState(s, k.id, now)} | ${s.evidence.filter(e => e.skill === k.id && e.ok).length} |`)
   const weak = Object.values(s.weak).filter(w => w.status !== 'resolved').map(w =>
