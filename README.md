@@ -2,7 +2,9 @@
 
 Learn any technical skill with Claude Code as your teacher, in your own editor and terminal.
 
-![A lesson in VS Code: a wrong answer, why it is wrong, and a drill to fix it](docs/lesson.png)
+An AI tutor plugin for [Claude Code](https://claude.com/claude-code). It writes a course on any programming language, tool or codebase for you, gives you hands-on exercises checked by tests on your machine, and uses spaced repetition so mistakes don't come back. Works in VS Code or the terminal.
+
+<img src="docs/lesson.png" width="520" alt="Teach Me Anything lesson in VS Code: a wrong answer, why it is wrong, and a drill to fix it">
 
 ## Quick start
 
@@ -12,14 +14,14 @@ Learn any technical skill with Claude Code as your teacher, in your own editor a
    /plugin install teachme-anything --marketplace The-Hasanov/teachme-anything
    ```
 
-2. Optional, for VS Code: build and install the extension.
+2. In an empty folder, tell Claude Code: **"teach me &lt;subject&gt;"**, or use one of the [skills](#skills).
+
+3. Optional, for VS Code: build and install the extension.
 
    ```sh
    cd extension && npm install && npm run package
-   code --install-extension teachme-anything-0.8.1.vsix
+   code --install-extension teachme-anything-0.8.2.vsix
    ```
-
-3. In an empty folder, tell Claude Code: **"teach me &lt;subject&gt;"**.
 
 ## What you get
 
@@ -39,13 +41,24 @@ Learn any technical skill with Claude Code as your teacher, in your own editor a
 | VS Code | the extension | a view in the secondary side bar |
 | Terminal | nothing extra | a pane beside the chat |
 
+## Skills
+
+Run with `/teachme-anything:<skill>`, or just say what you want.
+
+| Skill | What it does |
+|---|---|
+| `teach-codebase` | A course on the repo you are in, with exercises checked by its own tests |
+| `build-with-me` | Learn by building a project together, milestone by milestone |
+| `explore` | Read any topic in depth, no questions or tests |
+| `explain-step` | Explains the current step without giving away the answer |
+| `learning-progress` | Accuracy, first-try rate, hints, time and your learning curve |
+| `strengths-weaknesses` | What you are strong at and what to practise next |
+| `install-vscode` | Builds and installs the VS Code lesson view |
+| `doctor` | Finds why Teach Me is not working and fixes it |
+
 ## Privacy
 
 Everything stays on your machine. Nothing is installed without your click, and the tutor never edits your code.
-
-## Development
-
-Run every test with `sh scripts/check.sh` (`--quick` skips the extension).
 
 ## License
 
