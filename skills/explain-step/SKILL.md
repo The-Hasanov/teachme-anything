@@ -10,7 +10,7 @@ description: >
 # Explain the current step
 
 The learner is looking at a step in the lesson view. Its text, code and numbered choices are in
-`<teachme-position>` on their message. If that block is missing, call `mcp__teachme-anything__snapshot`.
+`.teachme/position.md`, which Teach Me keeps up to date. If that file is missing, call `mcp__teachme-anything__snapshot`.
 
 1. Read the "What they see", "Code" and "Choices" lines, and whether they answered ("They answered N: right" or
    "wrong") or said they do not know.

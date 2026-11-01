@@ -72,8 +72,17 @@ export function append($: EngineInterface, log: Log, events: readonly object[]) 
 export async function install($: EngineInterface, root: string, course: Course, segments: readonly Segment[]) {
   await $.fs.write(`${root}/${DIR}/course.json`, JSON.stringify(course, null, 2) + '\n')
   for (const g of segments) await $.fs.write(`${root}/${DIR}/scripts/${g.id}.json`, JSON.stringify(g, null, 2) + '\n')
-  await $.fs.write(`${root}/${DIR}/.gitignore`, 'env.json\nmetrics.jsonl\nstaging/\n')
+  await $.fs.write(`${root}/${DIR}/.gitignore`, `env.json\nmetrics.jsonl\n${LOCAL.join('\n')}\nstaging/\n`)
   await $.fs.write(`${root}/${DIR}/.gitattributes`, 'log/*.jsonl merge=union\n')
+}
+
+// This machine's session files, never shared through git. A course installed before them gets them in .gitignore
+const LOCAL = ['position.md', 'session.lock']
+export async function ignoreLocal($: EngineInterface, root: string) {
+  const path = `${root}/${DIR}/.gitignore`
+  const text = await $.fs.read(path).catch(() => undefined)
+  const missing = LOCAL.filter(f => !text?.split('\n').includes(f))
+  if (text !== undefined && missing.length) await $.fs.write(path, `${text.replace(/\n?$/, '\n')}${missing.join('\n')}\n`)
 }
 
 export function progressMarkdown(course: Course, s: LearnerState, now: number): string {

@@ -667,3 +667,18 @@ test('#31 a later lesson that reuses a step id starts unanswered: no pick, no ve
   // The answer in the first lesson is still there
   expect(l.c.state.result[`branches-1/${step.id}`]?.tone).toBe('wrong')
 })
+
+test('while Explore is open, the tutor is told the reading, and the unsolved step stays guarded', () => {
+  const l = learner()
+  l.toLesson()
+  l.go({ action: 'next' })
+  expect(current(l.c)!.step.choices).toBeTruthy()
+  l.go({ action: 'ask' })
+  const reading = { id: 'r', topic: 'Branches in depth', sections: [{ title: 'What a branch is' }, { title: 'Switching' }] }
+  const snap = snapshot({ ...l.c, explore: { reading, section: 1, library: [], suggest: [] } as never })
+  expect(snap).toMatch(/Now: reading "Branches in depth" in Explore, section 2 of 2 \("Switching"\)/)
+  expect(snap).toMatch(/Their place in the lesson: /)
+  expect(snap).not.toMatch(/What they see|stepped aside/)
+  expect(snap).toMatch(/never the command or answer/)
+  expect(snapshot(l.c)).toMatch(/What they see/)
+})
