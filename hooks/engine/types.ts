@@ -177,6 +177,7 @@ export type Effect =
   | { kind: 'setup' }
   | { kind: 'heal' }
   | { kind: 'prepare'; after: string; seg?: string }
+  | { kind: 'extend'; after: string }
   | { kind: 'remedy'; tag: string; skill?: string }
   | { kind: 'practice'; dir: string; seg: string }
   | { kind: 'ask'; question?: string }

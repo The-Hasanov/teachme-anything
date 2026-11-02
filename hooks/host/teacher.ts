@@ -125,12 +125,27 @@ export function courseTask(subject: string, env: string, example: { course: Cour
     codebase ? codebaseRules(codebase.replace(/\\/g, '/')) : '',
     project ? `They want to build "${project.title}": ${project.pitch}. Shape the course toward it: its last phase is that project, with "project": "practice/<name>", a one-sentence "brief" and 2 to 8 milestone segment ids. Earlier phases teach what the project needs.\n${PROJECT_RULES}` : '',
     background ? `They said what they already know: "${background}". Skip that, start where it ends, and compare with it.` : '',
-    `Submit the course with submit_course, then stop: format "teachme.course/1", a short id, subject, goal, intake (copy the three questions below), 4 to 10 skills (id, title, type: code | tool | data | config | ops | concept | design, prereqs, misconceptions: the 1 to 3 beliefs learners really hold, each with a tag), 2 to 5 phases (id, title, skills, segments: ids like "<phase>-1"; only the first phase needs its skills now), and setup (adapters: ${SETUP_ADAPTERS.join(', ')}; always end with "verify"; add "practice" when a segment will have a practice folder; a tool the subject needs goes first).`,
+    `Submit the course with submit_course, then stop: format "teachme.course/1", a short id, subject, goal, intake (copy the three questions below), 4 to 10 skills (id, title, type: code | tool | data | config | ops | concept | design, prereqs, misconceptions: the 1 to 3 beliefs learners really hold, each with a tag), 2 to 5 phases (id, title, skills, segments: ids like "<phase>-1"; plan the whole path now: every phase lists the skills it teaches and has at least one segment for every three of them, so every skill gets a lesson), and setup (adapters: ${SETUP_ADAPTERS.join(', ')}; always end with "verify"; add "practice" when a segment will have a practice folder; a tool the subject needs goes first).`,
     `Add "placement": 4 or 5 questions that let a learner who knows some of this show it, so lesson 1 starts where their knowledge ends. Each is a step of kind "mcq" or "predict" (id "pl1"…, skill, difficulty, title, body, choices each with a "why", key), one per skill across the first two phases, easiest first. A predict, or python, javascript or sql code, needs code.run with its exact output, as in lessons.`,
     `A tool that is not one of those adapters (kubectl, terraform, a database server) is still a setup item: adapter is its name, "check" the command that prints its version (["kubectl","version","--client"]), "why" one line on what the course uses it for. When the learner's machine lacks it, Teach Me installs and configures it for them.`,
     `Pick how each skill is verified: code by real tests in a practice folder, tools by checking the state they leave, data by comparing results on fixture data, concepts by predict, trace and transfer questions with run examples. Use only tools the setup lists; on this machine now: ${env}.`,
     `Intake: ${JSON.stringify(GENERIC_INTAKE)}`,
     `Example course and segment (the format):\n${JSON.stringify(example.course)}\n${JSON.stringify(example.segment)}`,
+  ].filter(Boolean).join('\n\n')
+}
+
+export function extendTask(course: Course, example: Segment | undefined, snapshot: string, untaught: readonly string[]) {
+  const first = untaught.length
+    ? `Start with the course skills no lesson has taught yet: ${untaught.join(', ')}. Then go further.`
+    : `Every course skill has been taught. Go further toward the goal "${course.goal}", or past it: the next skills a learner at this level needs. Add them with "newSkills" (id, title, type, prereqs, misconceptions).`
+  return [
+    'The learner finished every lesson of their course and asked for more. Plan what comes next as new phases after the last one, and write the first lesson of the first new phase.',
+    first,
+    'Fit it to the snapshot: work an open weakness into the new lessons, and use the skills they practised in its tasks ("uses").',
+    `Submit with submit_segment: "phases" is the whole list, every phase now in the course exactly as it is, then 1 to 3 new ones (id, title, skills, segments: new ids like "<phase>-1", at least one lesson for every three skills). "segment" is the first lesson of the first new phase. The next lessons are asked for as the learner gets there.`,
+    `Learner snapshot:\n${snapshot}`,
+    `Course:\n${JSON.stringify(course)}`,
+    example ? `Example segment (the format, and what the learner just did):\n${JSON.stringify(example)}` : '',
   ].filter(Boolean).join('\n\n')
 }
 
@@ -146,15 +161,18 @@ export function projectTask(course: Course, snapshot: string, pick: { title: str
   ].join('\n\n')
 }
 
-export function authorTask(course: Course, example: Segment | undefined, snapshot: string, nextId: string, phaseTitle: string) {
+export function authorTask(course: Course, example: Segment | undefined, snapshot: string, nextId: string, phaseTitle: string, taught: readonly string[] = []) {
   const phase = course.phases.find(p => p.segments.includes(nextId))
-  const isLast = !!phase && !phase.project && phase.segments.length > 1 && phase.segments.at(-1) === nextId
+  const left = phase && !phase.project ? phase.skills.filter(k => !taught.includes(k)) : []
+  const closesPhase = phase?.segments.at(-1) === nextId
+  const isLast = !!phase && !phase.project && phase.segments.length > 1 && closesPhase
   const isFirst = course.phases[0]?.segments[0] === nextId
   return [
     `Write segment "${nextId}" for the phase "${phaseTitle}".`,
     isFirst ? `It is the learner's first lesson. Fit it to their intake answers and placement check in the snapshot: skip what they showed they know (one line of recap at most), start at the first skill they missed, compare with the language they know best, and use examples from what they want it for.` : '',
     !phase?.project ? `Re-plan as you go: you may also submit "phases", the whole new list, to change what comes after this phase. Drop or shorten what the snapshot shows they already know, and add a phase or segment for an open weakness. Keep every phase up to and including this one exactly as it is, and keep project phases.` : '',
     phase?.project ? `It is milestone ${phase.segments.indexOf(nextId) + 1} of ${phase.segments.length} of the project "${phase.title}" (${phase.brief ?? ''}) in ${phase.project}. The example segment is the previous milestone.\n${PROJECT_RULES}` : '',
+    left.length ? `This phase still has to teach: ${left.join(', ')}. ${closesPhase ? 'This is its last lesson: teach and test every one of them here, or move one to a later phase with "phases".' : `Lessons left in it, this one included: ${phase!.segments.length - phase!.segments.indexOf(nextId)}. Share them out.`}` : '',
     isLast ? `It is the last segment of this phase: make it a small project, a practice task that uses the phase's skills together (${phase!.skills.join(', ')}), with "uses" naming them.` : '',
     `Learner snapshot:\n${snapshot}`,
     `Course:\n${JSON.stringify(course)}`,

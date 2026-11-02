@@ -9,13 +9,13 @@ import { replay } from './engine/engine'
 import type { Build, Course, Effect, Explore, LogEvent, Line, Phase, Press, ProjectPick, Reading, Requirement, Screen, Segment } from './engine/types'
 import { skillState } from './engine/mastery'
 import { migrate } from './engine/migrate'
-import { milestoneErrors, replanErrors, unclear, unclearReading, untaught, validateCourse, validateProjectPhase, validateReading, validateSegment } from './engine/schema'
+import { milestoneErrors, phaseGaps, planErrors, replanErrors, unclear, unclearReading, untaught, validateCourse, validateProjectPhase, validateReading, validateSegment } from './engine/schema'
 import { MANUAL, backUpScaffold, installPlan, isStaleScaffold, isTool, output, probeEnv, removeLesson, runCommand, runProbes, scaffold } from './host/adapters'
 import type { Env, Os } from './host/adapters'
 import { stats, statsText } from './engine/stats'
 import { DIR, append, hasCourse, ignoreLocal, install, load, newLog, progressMarkdown, writeGuide } from './host/store'
 import type { Log } from './host/store'
-import { AUTHOR_MODEL, AUTHOR_PROMPT, DOCTOR_PROMPT, GENERIC_INTAKE, PLAIN_ENGLISH, SETUP_ADAPTERS, authorTask, courseTask, diagnose, projectTask, readingTask } from './host/teacher'
+import { AUTHOR_MODEL, AUTHOR_PROMPT, DOCTOR_PROMPT, GENERIC_INTAKE, PLAIN_ENGLISH, SETUP_ADAPTERS, authorTask, courseTask, diagnose, extendTask, projectTask, readingTask } from './host/teacher'
 import { verifySegment } from './host/verify'
 import { newVsCode, sendView, tick } from './host/vscode'
 import type { LayoutOp, VsCode } from './host/vscode'
@@ -211,7 +211,7 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
 }
 
 // The effects run() handles. tests/invariants checks that the engine asks for no other; run() throws on one it can't do.
-export const HANDLED_EFFECTS: readonly Effect['kind'][] = ['check', 'escalate', 'setup', 'heal', 'practice', 'prepare', 'remedy', 'ask', 'restart', 'explore', 'peek']
+export const HANDLED_EFFECTS: readonly Effect['kind'][] = ['check', 'escalate', 'setup', 'heal', 'practice', 'prepare', 'remedy', 'ask', 'restart', 'explore', 'peek', 'extend']
 
 async function run($: EngineInterface, fx: Effect) {
   const s = sess!
@@ -243,6 +243,7 @@ async function run($: EngineInterface, fx: Effect) {
     if (fx.kind === 'heal') return heal($)
     if (fx.kind === 'practice') return ensurePractice($, fx.dir, fx.seg)
     if (fx.kind === 'prepare') return prepare($, fx.after, fx.seg)
+    if (fx.kind === 'extend') return extend($, fx.after)
     if (fx.kind === 'remedy') return remedy($, fx.tag, fx.skill)
     if (fx.kind === 'ask') return ask($, fx.question)
     if (fx.kind === 'restart') return restartPractice($, fx.segs, fx.fresh)
@@ -484,11 +485,34 @@ async function prepare($: EngineInterface, after: string, target?: string) {
   await refresh($)
   await spawnAgent($, {
     subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: 'Teach Me: prepare the next lesson',
-    prompt: authorTask(s.course, s.segments[after] ?? example.lists1, snapshot(await ctx($)), nextId, phase?.title ?? ''),
+    prompt: authorTask(s.course, s.segments[after] ?? example.lists1, snapshot(await ctx($)), nextId, phase?.title ?? '', taughtSkills(s)),
   }, async r => {
     if (r.deny) { s.preparing = undefined; $.ui.log(`teachme: author not started: ${r.deny}`, { to: 'debug' }); await refresh($) }
     else if (s.preparing === nextId) s.prepAgent = r.agentId
     void metric($, { kind: 'prepare', seg: nextId, started: !r.deny })
+  })
+}
+
+const taughtSkills = (s: Session) => [...new Set(Object.values(s.segments).flatMap(g => g.skills))]
+const EXTENDING = '+next'
+
+async function extend($: EngineInterface, after: string) {
+  const s = sess!
+  if (!s.course || s.preparing) return
+  const taught = new Set(taughtSkills(s))
+  const untaughtSkills = s.course.skills.filter(k => !taught.has(k.id)).map(k => k.id)
+  s.preparing = EXTENDING
+  s.prepError = undefined
+  s.prepSince = await $.clock.now()
+  s.prepAgent = undefined
+  await refresh($)
+  await spawnAgent($, {
+    subagentType: `${PLUGIN}:author`, model: AUTHOR_MODEL, description: 'Teach Me: plan and write more lessons',
+    prompt: extendTask(s.course, s.segments[after] ?? example.lists1, snapshot(await ctx($)), untaughtSkills),
+  }, async r => {
+    if (r.deny) { s.preparing = undefined; $.ui.log(`teachme: author not started: ${r.deny}`, { to: 'debug' }); await refresh($) }
+    else if (s.preparing === EXTENDING) s.prepAgent = r.agentId
+    void metric($, { kind: 'extend', after, untaught: untaughtSkills.length, started: !r.deny })
   })
 }
 
@@ -501,7 +525,7 @@ async function submitSegment($: EngineInterface, input: { segment: unknown; newS
   const course: Course = input.phases === undefined || replan.length ? known : { ...known, phases: input.phases as Phase[] }
   const errors = [...replan, ...validateSegment(seg, course)]
   const project = course.phases.find(p => p.project && p.segments.includes(seg?.id))
-  if (!errors.length) errors.push(...untaught(seg, Object.values(s.segments)), ...unclear(seg), ...(project ? milestoneErrors(seg, project, Object.values(s.segments)) : []))
+  if (!errors.length) errors.push(...untaught(seg, Object.values(s.segments)), ...unclear(seg), ...phaseGaps(seg, course, Object.values(s.segments)), ...(project ? milestoneErrors(seg, project, Object.values(s.segments)) : []))
   // A rejection is kept, so a failed attempt says why instead of failing silently
   const reject = (errs: string[]) => {
     s.prepError = errs[0]
@@ -514,7 +538,8 @@ async function submitSegment($: EngineInterface, input: { segment: unknown; newS
   const phases = course.phases.map(p => p.segments.includes(seg.id) ? { ...p, skills: [...new Set([...p.skills, ...seg.skills])] } : p)
   s.course = { ...course, phases }
   s.segments[seg.id] = seg
-  if (s.preparing === seg.id) s.preparing = undefined
+  const extended = input.phases !== undefined && !known.phases.some(p => p.segments.includes(seg.id))
+  if (s.preparing === seg.id || (s.preparing === EXTENDING && extended)) s.preparing = undefined
   await install($, s.root, s.course, [seg])
   void metric($, { kind: 'segment', seg: seg.id, verifyMs: v.ms, ...(input.phases ? { replanned: course.phases.length } : {}) })
   await refresh($)
@@ -838,6 +863,7 @@ async function submitCourse($: EngineInterface, input: { course: unknown }) {
     if (!SETUP_ADAPTERS.includes(r?.adapter) && !custom) errors.push(`setup ${r?.id}: adapter must be one of ${SETUP_ADAPTERS.join(', ')}, or name another tool and give "check", the command that prints its version`)
   }
   if (Array.isArray(c?.setup) && c.setup.at(-1)?.adapter !== 'verify') errors.push('setup must end with the verify requirement')
+  if (!errors.length) errors.push(...planErrors(c.phases))
   if (errors.length) return { ok: false, errors }
   // Placement questions are checked like a lesson: valid questions, and examples that print what they say
   if (c.placement?.length) {
@@ -905,7 +931,7 @@ export async function lessonRegister($: EngineInterface) {
   await $.tool.register({
     name: 'submit_segment',
     description: 'Teach Me author: submit a lesson segment (teachme.script/1). It is validated and every check is run before it is cached. Returns {ok} or {errors}.',
-    inputSchema: { type: 'object', properties: { segment: { type: 'object' }, newSkills: { type: 'array', items: { type: 'object' } }, phases: { type: 'array', items: { type: 'object' }, description: 'Optional re-plan: the whole new list of phases; only phases after the one of this segment may change' } }, required: ['segment'] },
+    inputSchema: { type: 'object', properties: { segment: { type: 'object' }, newSkills: { type: 'array', items: { type: 'object' } }, phases: { type: 'array', items: { type: 'object' }, description: 'Optional re-plan: the whole new list of phases; only phases after the one of this segment may change. For more lessons after the last one, every phase stays and the new ones follow' } }, required: ['segment'] },
   })
   await $.tool.register({
     name: 'build_with_me', isDeferred: false,

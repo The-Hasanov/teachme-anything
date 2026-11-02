@@ -769,6 +769,59 @@ test('#13 the author of the next lesson, asked for by a press, starts from a rel
   await ui.unmount()
 })
 
+test('the last lesson done, More lessons plans new phases after it and writes their first lesson', async ($, on) => {
+  const { files } = world(on)
+  const { prompts, relays, relay, end } = agents($, on)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__teachme-anything__start_course', subject: 'Kubernetes' } as never)
+  await relay()
+  const call = async (tool: string, input: object, agentId: string) =>
+    JSON.parse((await $.tool.call({ tool: `mcp__teachme-anything__${tool}`, ...input, agentId } as never)).result as string)
+  const skill = (id: string, title: string) => ({ id, title, type: 'concept', prereqs: [], misconceptions: [] })
+  const course = {
+    format: 'teachme.course/1', id: 'k8s', subject: 'Kubernetes', goal: 'run an app on a cluster', intake: [],
+    skills: [skill('pods', 'Pods'), skill('services', 'Services')],
+    phases: [{ id: 'basics', title: 'Pods', skills: ['pods', 'services'], segments: ['basics-1'] }],
+    setup: [{ id: 'verify', title: 'Checked on your machine', adapter: 'verify', where: 'local' }],
+  }
+  const lesson = (id: string, k: string, uses?: string[]) => ({
+    format: 'teachme.script/1', id, title: `About ${k}`, skills: [k],
+    steps: [
+      { id: `${id}-a`, kind: 'concept', skill: k, difficulty: 1, title: `About ${k}`, body: `A ${k} thing runs containers.` },
+      { id: `${id}-b`, kind: 'mcq', skill: k, difficulty: 1, title: 'Which', body: 'What does it run?', choices: [{ text: 'Containers', why: 'Right.' }, { text: 'Clusters', why: 'No.' }], key: [0], ...(uses ? { uses } : {}) },
+    ],
+  })
+  expect(await call('submit_course', { course: { ...course, phases: [{ ...course.phases[0], skills: ['pods', 'services', 'nope'] }] } }, 'a1')).toMatchObject({ ok: false })
+  expect(await call('submit_course', { course }, 'a1')).toMatchObject({ ok: true })
+  expect((await call('submit_segment', { segment: lesson('basics-1', 'pods') }, 'a1')).errors.join(' ')).toMatch(/skill services is not taught/)
+  const services = { id: 'services', title: 'Services', skills: ['services'], segments: ['services-1'] }
+  expect(await call('submit_segment', { segment: lesson('basics-1', 'pods'), phases: [course.phases[0], services] }, 'a1')).toMatchObject({ ok: true })
+  await end('a1')
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  for (const key of ['choose-1', 'choose-2', 'choose-1', 'act-continue', 'act-start', 'act-next', 'choose-1', 'act-next']) await ui.press({ key })
+  await relay()
+  expect(prompts().at(-1)).toMatch(/Write segment "services-1"/)
+  expect(await call('submit_segment', { segment: lesson('services-1', 'services', ['pods']) }, 'a2')).toEqual({ ok: true, id: 'services-1' })
+  await end('a2')
+  for (const key of ['act-start', 'act-next', 'choose-1', 'act-next']) await ui.press({ key })
+  expect(await shown(ui)).toMatch(/You finished every lesson planned so far/)
+  const before = relays.length
+  await ui.press({ key: 'act-extend' })
+  expect(relays.length).toBe(before + 1)
+  await relay()
+  expect(prompts().at(-1)).toMatch(/finished every lesson of their course[\s\S]*Every course skill has been taught/)
+  expect(await shown(ui)).toMatch(/being written and checked/)
+  const more = { id: 'deploy', title: 'Deployments', skills: ['deploys'], segments: ['deploy-1'] }
+  const phases = JSON.parse(files[`${ROOT}/.teachme/course.json`]!).phases
+  expect(await call('submit_segment', { segment: lesson('deploy-1', 'deploys', ['pods']), newSkills: [skill('deploys', 'Deployments')], phases: [...phases, more] }, 'a3')).toEqual({ ok: true, id: 'deploy-1' })
+  await end('a3')
+  expect(await shown(ui)).toMatch(/Your next lesson is ready/)
+  await ui.press({ key: 'act-start' })
+  expect(await shown(ui)).toMatch(/About deploys/)
+  await ui.unmount()
+})
+
 test('#18 an author that ends without submitting records why in the metrics', async ($, on) => {
   const { files } = world(on)
   const { prompts, relays, relay, end } = agents($, on)
