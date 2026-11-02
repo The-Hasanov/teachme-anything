@@ -102,12 +102,34 @@ export function validateReading(r: any): string[] {
 export function replanErrors(course: Course, phases: any, segId: string): string[] {
   if (!isArr(phases)) return ['phases must be the whole new list of phases']
   const at = course.phases.findIndex(p => p.segments.includes(segId))
+  const extending = at < 0
+  const kept = extending ? course.phases.length : at + 1
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
-  const err = course.phases.slice(0, at + 1).flatMap((p, i) => same(phases[i], p) ? [] : [`phases[${i}] must stay exactly as it is ("${p.id}"): only phases after it may change`])
+  const err = course.phases.slice(0, kept).flatMap((p, i) => same(phases[i], p) ? [] : [`phases[${i}] must stay exactly as it is ("${p.id}"): only phases after it may change`])
   for (const p of course.phases.filter(x => x.project)) if (!phases.some((q: unknown) => same(q, p))) err.push(`the project phase "${p.id}" must stay`)
   const ids = phases.flatMap((p: any) => isArr(p?.segments) ? p.segments : [])
   for (const id of new Set(ids.filter((id: string, i: number) => ids.indexOf(id) !== i))) err.push(`segment id "${id}" is in more than one phase`)
-  return [...err, ...validateCourse({ ...course, phases }).map(e => `phases: ${e}`)]
+  if (extending && ids[course.phases.flatMap(p => p.segments).length] !== segId) err.push(`segment "${segId}" must be the first lesson of the first new phase`)
+  const shape = validateCourse({ ...course, phases }).map(e => `phases: ${e}`)
+  return [...err, ...shape, ...(shape.length ? [] : planErrors(phases.slice(kept)))]
+}
+
+export const SKILLS_PER_LESSON = 3
+
+export function planErrors(phases: readonly Phase[]): string[] {
+  return phases.filter(p => !p.project).flatMap(p => [
+    ...(p.skills.length ? [] : [`phase "${p.id}" lists no skills: name the skills it teaches`]),
+    ...(p.segments.length * SKILLS_PER_LESSON >= p.skills.length ? [] : [`phase "${p.id}" has ${p.skills.length} skills and ${p.segments.length} lesson(s): give it a lesson for every ${SKILLS_PER_LESSON} skills at most`]),
+  ])
+}
+
+export function phaseGaps(g: Segment, course: Course, written: readonly Segment[]): string[] {
+  const phase = course.phases.find(p => p.segments.includes(g.id))
+  if (!phase || phase.project || phase.segments.at(-1) !== g.id) return []
+  const taught = new Set([...written, g].flatMap(x => x.skills))
+  const later = new Set(course.phases.slice(course.phases.indexOf(phase) + 1).flatMap(p => p.skills))
+  return phase.skills.filter(k => !taught.has(k) && !later.has(k)).map(k =>
+    `this is the last lesson of phase "${phase.id}", and its skill ${k} is not taught in any lesson: teach and test it here, or submit "phases" with a later phase that teaches it`)
 }
 
 export function validateProjectPhase(p: any, course: Course, newSkills: readonly any[] = []): string[] {

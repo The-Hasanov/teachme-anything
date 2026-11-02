@@ -5,7 +5,7 @@ import { apply, checked, current, dashboard, dueItems, initial, lookBack, press,
 import type { Ctx, Out } from '../hooks/engine/engine'
 import { skillState } from '../hooks/engine/mastery'
 import { stats } from '../hooks/engine/stats'
-import { replanErrors, unclear, unclearReading, untaught, validateCourse, validateReading, validateSegment } from '../hooks/engine/schema'
+import { phaseGaps, planErrors, replanErrors, unclear, unclearReading, untaught, validateCourse, validateReading, validateSegment } from '../hooks/engine/schema'
 import type { LogEvent, Press } from '../hooks/engine/types'
 
 const T0 = Date.parse('2026-10-27T10:00:00Z')
@@ -614,6 +614,50 @@ test('a re-plan changes only what comes after the phase being written, and keeps
   expect(replanErrors(course, [later, project], first).join(' ')).toMatch(/phases\[0\] must stay exactly as it is/)
   expect(replanErrors(course, [c.phases[0], { ...later, segments: [first] }, project], first).join(' ')).toMatch(/in more than one phase/)
   expect(replanErrors(course, [c.phases[0], { ...later, skills: ['nope'] }, project], first).join(' ')).toMatch(/unknown skill nope/)
+})
+
+test('a plan gives every phase its skills and a lesson for every three of them; projects are exempt', () => {
+  const phase = { id: 'p', title: 'P', skills: ['a', 'b', 'c', 'd'], segments: ['p-1'] }
+  expect(planErrors([phase]).join(' ')).toMatch(/phase "p" has 4 skills and 1 lesson/)
+  expect(planErrors([{ ...phase, segments: ['p-1', 'p-2'] }])).toEqual([])
+  expect(planErrors([{ ...phase, skills: [] }]).join(' ')).toMatch(/phase "p" lists no skills/)
+  expect(planErrors([{ ...phase, skills: [], project: 'practice/x' }])).toEqual([])
+})
+
+test('the last lesson of a phase cannot leave one of its skills untaught, unless a later phase takes it', () => {
+  const c = git.course
+  const types = { id: 'types', title: 'Types', skills: ['branch-model', 'branch-from'], segments: ['types-1'] }
+  const course = { ...c, phases: [types] }
+  const seg = { ...git.branches1, id: 'types-1', skills: ['branch-model'] }
+  expect(phaseGaps(seg, course, [])).toEqual([expect.stringMatching(/last lesson of phase "types", and its skill branch-from is not taught/)])
+  expect(phaseGaps(seg, course, [{ ...git.branches1, skills: ['branch-from'] }])).toEqual([])
+  expect(phaseGaps(seg, { ...course, phases: [types, { id: 'more', title: 'More', skills: ['branch-from'], segments: ['more-1'] }] }, [])).toEqual([])
+  expect(phaseGaps(seg, { ...course, phases: [{ ...types, segments: ['types-1', 'types-2'] }] }, [])).toEqual([])
+})
+
+test('more lessons after the last one keep every phase and start with the first new lesson', () => {
+  const c = git.course
+  const more = { id: 'more', title: 'More', skills: ['branch-from'], segments: ['more-1', 'more-2'] }
+  expect(replanErrors(c, [...c.phases, more], 'more-1')).toEqual([])
+  expect(replanErrors(c, [c.phases[0], more], 'more-1').join(' ')).toMatch(/phases\[1\] must stay exactly as it is/)
+  expect(replanErrors(c, [...c.phases, more], 'more-2').join(' ')).toMatch(/"more-2" must be the first lesson of the first new phase/)
+  expect(replanErrors(c, [...c.phases, { ...more, skills: [] }], 'more-1').join(' ')).toMatch(/lists no skills/)
+})
+
+test('the end of the course offers More lessons, shows them being written, and says why they failed', () => {
+  const l = learner()
+  l.toLesson()
+  l.c.course = { ...git.course, phases: [git.course.phases[0]!] }
+  l.take({ events: [{ ts: l.c.now, type: 'enter', seg: 'branches-1', step: git.branches1.steps.length - 1 }, { ts: l.c.now, type: 'stage', stage: 'recap' }], effects: [] })
+  expect(screen(l.c).result).toEqual({ tone: 'right', text: expect.stringMatching(/^You finished every lesson planned so far/) })
+  expect(screen(l.c).actions.map(a => a.id)).toEqual(['extend', 'curriculum', 'progress', 'explore'])
+  expect(press(l.c, { action: 'extend' }).effects).toEqual([{ kind: 'extend', after: 'branches-1' }])
+  Object.assign(l.c, { preparing: true, prepSince: l.c.now - 5_000 })
+  expect(screen(l.c).result).toEqual({ tone: 'wait', text: expect.stringMatching(/5s so far\.$/) })
+  expect(press(l.c, { action: 'extend' }).effects).toEqual([])
+  Object.assign(l.c, { preparing: false, prepSince: undefined, prepError: 'the author stopped without submitting it and gave no reason' })
+  expect(screen(l.c).result).toEqual({ tone: 'wrong', text: 'Your next lesson could not be written: the author stopped without submitting it and gave no reason' })
+  expect(screen(l.c).actions.map(a => a.id)).toContain('extend')
 })
 
 test('a reading for Explore: 3 to 12 sections, each with a source, short enough to read, runnable examples that say their output', () => {

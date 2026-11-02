@@ -433,6 +433,7 @@ export function press(c: Ctx, p: Press): Out {
       return go ? { events: [{ ts: c.now, type: 'stage', stage: 'lesson' }, ...go.events], effects: go.effects } : NONE
     }
     if (action === 'retry' && s.done && ahead(c) === 'missing') return { events: [], effects: [{ kind: 'prepare', after: s.done }] }
+    if (action === 'extend' && s.done && ahead(c) === 'end') return { events: [], effects: [{ kind: 'extend', after: s.done }] }
     if (action?.startsWith('open:')) return openLesson(c, action.slice(5))
     if (action === 'curriculum' && s.stage === 'recap') return { events: [{ ts: c.now, type: 'stage', stage: 'curriculum' }], effects: [] }
     return NONE
@@ -533,7 +534,7 @@ const nextSegment = (c: Ctx, seg: string) => { const order = c.course ? segmentO
 const ahead = (c: Ctx) => {
   if (!c.state.done) return undefined
   const next = nextSegment(c, c.state.done)
-  return !next ? 'end' : c.segments[next] ? 'ready' : c.preparing ? 'writing' : 'missing'
+  return c.segments[next ?? ''] ? 'ready' : c.preparing ? 'writing' : next ? 'missing' : 'end'
 }
 
 // A question without choices (one cached before the schema refused it, #15) has nothing to answer: Next goes on
@@ -815,12 +816,12 @@ const NEXT_TEXT = {
   ready: { tone: 'right', text: 'Your next lesson is ready.' },
   writing: { tone: 'wait', text: 'Your next lesson is being written and checked. About a minute.' },
   missing: { tone: 'info', text: 'Your next lesson is not written yet.' },
-  end: { tone: 'right', text: 'You finished the course.' },
+  end: { tone: 'right', text: 'You finished every lesson planned so far. Press More lessons, and the next ones are written for you.' },
 } as const
 const nextParts = (c: Ctx) => {
   const a = ahead(c)
   if (a === 'writing' && c.prepSince !== undefined) return writingPart(c)
-  if (a === 'missing' && c.prepError) return { result: { tone: 'wrong' as const, text: `Your next lesson could not be written: ${c.prepError}` } }
+  if ((a === 'missing' || a === 'end') && c.prepError) return { result: { tone: 'wrong' as const, text: `Your next lesson could not be written: ${c.prepError}` } }
   return a ? { result: NEXT_TEXT[a] } : {}
 }
 function missingScreen(c: Ctx, title: string): Screen {
@@ -836,7 +837,7 @@ const writingPart = (c: Ctx) => {
 }
 const nextActions = (c: Ctx, label: string): Action[] => {
   const a = ahead(c)
-  return !a || a === 'ready' ? [act('start', label, true, 'enter')] : a === 'missing' ? [act('retry', 'Write it now', true, 'enter')] : []
+  return !a || a === 'ready' ? [act('start', label, true, 'enter')] : a === 'missing' ? [act('retry', 'Write it now', true, 'enter')] : a === 'end' ? [act('extend', 'More lessons', true, 'enter')] : []
 }
 
 // The step a lesson stands on: a drill counts as the task it came from
