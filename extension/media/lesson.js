@@ -83,8 +83,8 @@
   const OUT_WARN = /^(warning[:[]|Warning\b|WARN\b|hint:)/i;
   const output = (s) => String(s).split('\n').map(l => OUT_ERR.test(l) ? `<span class="t-err">${esc(l)}</span>` : OUT_WARN.test(l) ? `<span class="t-warn">${esc(l)}</span>` : esc(l)).join('\n');
   const icon = (name, label) => `<span class="codicon codicon-${name}" ${label ? `aria-label="${esc(label)}" role="img"` : 'aria-hidden="true"'}></span>`;
-  const MARK = { ok: ['pass', 'done'], todo: ['circle-large-outline', 'to do'], fail: ['warning', 'needs attention'], run: ['loading', 'running'], now: ['circle-large-filled', 'current'], half: ['color-mode', 'learning'] };
-  const KEY = { n: 'N', enter: 'Enter', h: 'H', a: 'A', b: 'B', g: 'G', p: 'P', u: 'U', s: 'S', d: 'D', e: 'E', c: 'C', left: '←' };
+  const MARK = { ok: ['pass', 'done'], todo: ['circle-large-outline', 'to do'], fail: ['warning', 'needs attention'], run: ['loading', 'running'], now: ['circle-large-filled', 'current'], half: ['color-mode', 'learning'], read: ['book', 'reading'] };
+  const KEY = { n: 'N', enter: 'Enter', h: 'H', a: 'A', b: 'B', g: 'G', p: 'P', r: 'R', u: 'U', s: 'S', d: 'D', e: 'E', c: 'C', left: '←' };
   const TONE_ICON = { right: 'pass', wrong: 'warning', wait: 'loading', info: 'info' };
   const kbd = (a) => a.key && KEY[a.key] ? `<span class="kbd">${KEY[a.key]}</span>` : '';
   const target = (el) => el?.dataset?.action ? `[data-action="${el.dataset.action}"]` : el?.dataset?.choose ? `[data-choose="${el.dataset.choose}"]` : undefined;

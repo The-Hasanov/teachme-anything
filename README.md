@@ -20,7 +20,7 @@ An AI tutor plugin for [Claude Code](https://claude.com/claude-code). It writes 
 
    ```sh
    cd extension && npm install && npm run package
-   code --install-extension teachme-anything-0.8.7.vsix
+   code --install-extension teachme-anything-0.8.8.vsix
    ```
 
 ## What you get
@@ -28,7 +28,7 @@ An AI tutor plugin for [Claude Code](https://claude.com/claude-code). It writes 
 - **A course written for you.** No ready-made courses: yours is planned from your answers and re-planned as you go. Finished it? Press **More lessons** for the next ones.
 - **Real practice.** Exercises run on your machine and are checked by tests. Missing tools install in one click.
 - **Mistakes fixed for good.** A repeated mistake comes back from a new angle until it sticks.
-- **Look back anytime.** Every finished lesson and reading stays one tap away on your path.
+- **Look back anytime.** Every finished lesson stays one tap away on your path, and every reading on its own Readings page.
 - **Explore freely.** Read any topic in depth, with no tests: press **Explore** or say "explore &lt;topic&gt;".
 - **Learn a codebase.** In a repo, say "teach me this codebase".
 - **Build with me.** Run `/teachme-anything:build-with-me` to learn by building a project.

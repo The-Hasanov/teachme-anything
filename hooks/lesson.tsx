@@ -53,6 +53,7 @@ type Session = {
   env?: Env
   welcome: boolean
   progress?: boolean
+  shelf?: boolean
   // An earlier step shown read-only (Previous, or a finished lesson opened from the path); the log never changes for it
   peek?: { seg: string; step: number }
   // The section each reading was left at, so it reopens there
@@ -94,7 +95,7 @@ async function deviceOf($: EngineInterface) {
 
 async function ctx($: EngineInterface): Promise<Ctx> {
   const s = sess!
-  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, peek: s.peek, readings: s.readings && Object.values(s.readings).map(r => ({ id: r.id, topic: r.topic, read: s.state.read[r.id]?.length ?? 0, total: r.sections.length })), preparing: !!s.preparing, prepSince: s.preparing ? s.prepSince : undefined, prepError: s.prepError, build: s.build?.open ? s.build : undefined, explore: s.explore, asked: askedHere(s) }
+  return { state: s.state, course: s.course, segments: s.segments, now: await $.clock.now(), welcome: s.welcome, busy: s.busy, progress: s.progress, shelf: s.shelf, peek: s.peek, readings: s.readings && Object.values(s.readings).map(r => ({ id: r.id, topic: r.topic, read: s.state.read[r.id]?.length ?? 0, total: r.sections.length })), preparing: !!s.preparing, prepSince: s.preparing ? s.prepSince : undefined, prepError: s.prepError, build: s.build?.open ? s.build : undefined, explore: s.explore, asked: askedHere(s) }
 }
 
 const askedHere = (s: Session) => {
@@ -185,6 +186,13 @@ export async function dispatch($: EngineInterface, p: Press, sentAt?: number) {
   if ('action' in p && p.action === 'progress') { s.progress = true; return refresh($) }
   if ('action' in p && p.action === 'back') s.asking = undefined
   if (s.progress) { if ('action' in p && p.action === 'back') { s.progress = false; await refresh($) } return }
+  if ('action' in p && p.action === 'readings') { s.shelf = true; return refresh($) }
+  if (s.shelf) {
+    const action = 'action' in p ? p.action : undefined
+    if (action === 'back') { s.shelf = false; return refresh($) }
+    if (action === 'explore' || action?.startsWith('read:')) s.shelf = false
+    else return
+  }
   if (s.peek) {
     const action = 'action' in p ? p.action : undefined
     if (action === 'back') { s.peek = undefined; return refresh($) }
@@ -647,6 +655,8 @@ async function openPage($: EngineInterface, input: { page?: string; name?: strin
   const shown = async () => { await $.ui.open({ id: PANE, title: s.course!.subject }); await refresh($); return { ok: true, next: 'The lesson view shows it. Say one short line; nothing else to do.' } }
   s.peek = undefined
   s.progress = input.page === 'progress'
+  s.shelf = input.page === 'readings'
+  if (input.page === 'readings') { s.explore = undefined; return shown() }
   if (input.page === 'progress') { s.explore = undefined; return shown() }
   if (input.page === 'path') { s.explore = undefined; await commit($, press(await ctx($), { action: 'curriculum' })); return shown() }
   if (input.page === 'lesson') {
@@ -668,7 +678,7 @@ async function openPage($: EngineInterface, input: { page?: string; name?: strin
     s.explore = { ...(s.explore ?? exploreHome(s, all)), reading: r, section: Math.max(0, ...(s.state.read[r.id] ?? [])), contents: true, writing: undefined, note: undefined }
     return shown()
   }
-  return { error: 'page is one of: lesson, reading, path, progress.' }
+  return { error: 'page is one of: lesson, reading, readings, path, progress.' }
 }
 
 async function showSection($: EngineInterface, r: Reading, section: number) {
@@ -952,11 +962,11 @@ export async function lessonRegister($: EngineInterface) {
   })
   await $.tool.register({
     name: 'open', isDeferred: false,
-    description: 'Teach Me: open a page of the lesson view, whenever you want to show the learner something in their course or they ask to open or see it ("open the ownership lesson", "show me the materials on ownership", "show my path"). page lesson: a lesson they reached, read-only; reading: an Explore reading\'s contents, so they pick the section; path; progress.',
+    description: 'Teach Me: open a page of the lesson view, whenever you want to show the learner something in their course or they ask to open or see it ("open the ownership lesson", "show me the materials on ownership", "show my path"). page lesson: a lesson they reached, read-only; reading: an Explore reading\'s contents, so they pick the section; readings: the list of their Explore readings; path; progress.',
     inputSchema: {
       type: 'object',
       properties: {
-        page: { type: 'string', enum: ['lesson', 'reading', 'path', 'progress'] },
+        page: { type: 'string', enum: ['lesson', 'reading', 'readings', 'path', 'progress'] },
         name: { type: 'string', description: 'For lesson or reading: part of its title, e.g. "ownership"' },
       },
       required: ['page'],
@@ -1223,8 +1233,8 @@ export const registerLesson: Register = on => {
     const tone = (t?: string) => t === 'right' ? 'success' : t === 'wrong' ? 'warning' : undefined
     // Only letters can be hotkeys here; Previous (← in the view) takes P when nothing else on the screen does
     const hotkey = (k?: string) => k === 'left' && !sc.actions.some(a => a.key === 'p') ? 'p' : k && /^[a-z]$/.test(k) ? k : undefined
-    const glyph = { ok: '✓', todo: '○', fail: '⚠', run: '…', now: '●', half: '◐' } as const
-    const markColor = { ok: 'success', todo: undefined, fail: 'warning', run: undefined, now: ACCENT, half: ACCENT } as const
+    const glyph = { ok: '✓', todo: '○', fail: '⚠', run: '…', now: '●', half: '◐', read: '📖' } as const
+    const markColor = { ok: 'success', todo: undefined, fail: 'warning', run: undefined, now: ACCENT, half: ACCENT, read: undefined } as const
     const line = (l: Line, key: string) => (
       <Box key={key} flexDirection="column">
         {l.action
