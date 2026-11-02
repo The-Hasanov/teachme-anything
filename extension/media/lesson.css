@@ -53,7 +53,7 @@ ul.lines .link { text-align: left; }
 .choice .here { margin-left: var(--tm-s1); padding: 0 6px; border-radius: 99px; font-size: .8em; color: var(--tm-accent); border: 1px solid currentColor; }
 .choice[aria-current="true"] { border-color: var(--tm-accent); }
 ul.lines .detail { grid-column: 2; color: var(--tm-muted); font-size: .9em; }
-.mark-ok { color: var(--tm-right); } .mark-fail { color: var(--tm-amber); } .mark-todo, .mark-run { color: var(--tm-muted); } .mark-now { color: var(--tm-focus); } .mark-half { color: var(--tm-accent); }
+.mark-ok { color: var(--tm-right); } .mark-fail { color: var(--tm-amber); } .mark-todo, .mark-run { color: var(--tm-muted); } .mark-now { color: var(--tm-focus); } .mark-half { color: var(--tm-accent); } .mark-read { color: var(--tm-muted); }
 .choices { display: flex; flex-direction: column; gap: var(--tm-s2); margin: var(--tm-s3) 0; }
 .choice { display: grid; grid-template-columns: 22px 1fr; gap: 0 var(--tm-s2); width: 100%; text-align: left; padding: var(--tm-s2) var(--tm-s3); color: var(--tm-fg); background: var(--tm-surface); border: 1px solid var(--tm-edge); border-radius: var(--tm-card-radius); box-shadow: 0 1px 2px color-mix(in srgb, var(--vscode-foreground) 14%, transparent); font: inherit; cursor: pointer; }
 .choice:hover:not(:disabled) { border-color: var(--tm-focus); }

@@ -11,6 +11,7 @@ export type Ctx = {
   welcome?: boolean
   busy?: string
   progress?: boolean
+  shelf?: boolean
   preparing?: boolean
   prepSince?: number
   prepError?: string
@@ -18,7 +19,6 @@ export type Ctx = {
   explore?: Explore
   // Looking back at an earlier step (Previous, or a finished lesson opened from the path): shown read-only
   peek?: { seg: string; step: number }
-  // Explore readings written here: listed on the path with lessons, so everything studied stays one tap away
   readings?: { id: string; topic: string; read: number; total: number }[]
   // Ask on this step: the agent's explanation once its turn ended, until then the question being answered
   asked?: { question?: string; answer?: string }
@@ -598,6 +598,7 @@ export function screen(c: Ctx): Screen {
   if (!c.course) return { kind: 'empty', title: 'Teach Me', body: 'Say "teach me <subject>" in the chat to start.', actions: [] }
   const course = c.course
   if (c.progress) return progressScreen(c)
+  if (c.shelf) return readingsScreen(c)
   const peek = c.peek && peekScreen(c, c.peek)
   if (peek) return peek
   if (c.welcome && s.stage === 'lesson' && current(c)) {
@@ -663,8 +664,7 @@ export function screen(c: Ctx): Screen {
       }),
       ...(!segmentOrder(course).some(id => c.segments[id])
         ? { result: { tone: 'wait' as const, text: 'Your first lesson is being written and checked. About a minute.' }, actions: [PROGRESS, EXPLORE] }
-        : { ...nextParts(c), actions: [...nextActions(c, s.pos ? 'Continue' : `Start ${course.phases[0]?.title ?? ''}`.trim()), PROGRESS, EXPLORE] }),
-      ...readingsGroup(c),
+        : { ...nextParts(c), actions: [...nextActions(c, s.pos ? 'Continue' : `Start ${course.phases[0]?.title ?? ''}`.trim()), ...readingsAction(c), PROGRESS, EXPLORE] }),
     }
   }
   if (s.stage === 'recap') {
@@ -894,13 +894,17 @@ function peekScreen(c: Ctx, p: { seg: string; step: number }): Screen | undefine
   }
 }
 
-// Every reading written here, each one tap away from the path, marked by how much of it was read
-const readingsGroup = (c: Ctx) => c.readings?.length ? {
-  groups: [{
-    title: 'Your readings',
-    lines: c.readings.map(r => ({ mark: r.read >= r.total ? 'ok' as const : r.read ? 'half' as const : 'todo' as const, text: r.topic, detail: `${r.read} of ${r.total} sections read`, action: `read:${r.id}` })),
-  }],
-} : {}
+const readingsAction = (c: Ctx) => c.readings?.length ? [act('readings', `Readings · ${c.readings.length}`, false, 'r')] : []
+
+function readingsScreen(c: Ctx): Screen {
+  const readings = c.readings ?? []
+  return {
+    kind: 'readings', title: 'Your readings',
+    body: readings.length ? 'What you read in Explore. Not graded, and not part of your path.' : 'Nothing read yet. Press Explore to read about any topic.',
+    lines: readings.map(r => ({ mark: r.read >= r.total ? 'ok' as const : 'read' as const, text: r.topic, detail: r.read >= r.total ? 'Read' : `${r.read} of ${r.total} sections read`, action: `read:${r.id}` })),
+    actions: [act('back', backTo(c.state, 'Back'), true, 'b'), EXPLORE],
+  }
+}
 
 const LESSON_MARK = { done: 'ok', now: 'now', ready: 'todo', todo: 'todo', writing: 'run', failed: 'fail' } as const
 const LESSON_NOTE: Partial<Record<keyof typeof LESSON_MARK, string>> = { writing: 'Being written', failed: 'Could not be written' }
@@ -1170,6 +1174,7 @@ function awayText(c: Ctx): string {
   if (x) return 'Now: Explore, choosing a topic to read. Nothing there is graded.'
   if (c.build) return 'Now: choosing a project to build together.'
   if (c.progress) return 'Now: looking at their progress.'
+  if (c.shelf) return 'Now: looking at their readings from Explore.'
   const seg = c.peek && c.segments[c.peek.seg]
   const step = c.peek && seg?.steps[c.peek.step]
   if (seg && step) return `Now: looking back at "${step.title}" in ${seg.title}, read-only.`

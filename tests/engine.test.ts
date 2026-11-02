@@ -417,15 +417,21 @@ test('Path opens a finished lesson read-only from its first step; Back goes to t
   expect(l.go({ action: 'open:merge-1' }).effects).toEqual([])
 })
 
-test('Path lists every reading written here, each one tap from opening; studied lessons and readings stay reachable', () => {
+test('readings are not on the path: a Readings button opens their own page, each one tap from opening', () => {
   const l = learner()
   l.toLesson()
   l.c.readings = Array.from({ length: 10 }, (_, i) => ({ id: `r${i}`, topic: `Topic ${i}`, read: i % 3, total: 2 }))
   l.go({ action: 'curriculum' })
-  const g = screen(l.c).groups!.find(x => x.title === 'Your readings')!
-  expect(g.lines).toHaveLength(10)
-  expect(g.lines.slice(0, 3).map(x => `${x.mark}:${x.detail}`)).toEqual(['todo:0 of 2 sections read', 'half:1 of 2 sections read', 'ok:2 of 2 sections read'])
-  expect(l.go({ action: g.lines[9]!.action! }).effects).toEqual([{ kind: 'explore', topic: 'Topic 9' }])
+  const path = screen(l.c)
+  expect(path.groups).toBeUndefined()
+  expect(path.lines?.some(x => x.action?.startsWith('read:'))).toBe(false)
+  expect(path.actions.map(a => `${a.id}:${a.label}`)).toContain('readings:Readings · 10')
+  const page = screen({ ...l.c, shelf: true })
+  expect(page).toMatchObject({ kind: 'readings', title: 'Your readings', body: expect.stringMatching(/Not graded, and not part of your path/) })
+  expect(page.actions.map(a => `${a.id}:${a.label}`)).toEqual(['back:Back to your path', 'explore:Explore'])
+  expect(page.lines).toHaveLength(10)
+  expect(page.lines!.slice(0, 3).map(x => `${x.mark}:${x.detail}`)).toEqual(['read:0 of 2 sections read', 'read:1 of 2 sections read', 'ok:Read'])
+  expect(l.go({ action: page.lines![9]!.action! }).effects).toEqual([{ kind: 'explore', topic: 'Topic 9' }])
   expect(l.go({ action: 'read:nope' }).effects).toEqual([])
 })
 

@@ -76,6 +76,7 @@ assert.match(root.innerHTML, /<p class="keys">Enter Next section · ← Previous
 keydown('?');
 assert.ok(!/class="keys"/.test(root.innerHTML), '? closes it again');
 assert.match(draw({ kind: 'progress', title: 'Your progress', groups: [{ title: 'Skills', lines: [{ mark: 'half', text: 'Branches' }, { mark: 'now', text: 'Merging' }] }], actions: [] }), /<span class="mark-half"><span class="codicon codicon-color-mode" aria-label="learning" role="img"><\/span><\/span><span>Branches/, 'a skill being learned has its own half mark');
+assert.match(draw({ kind: 'readings', title: 'Your readings', lines: [{ mark: 'read', text: 'Option and Result', detail: '2 of 8 sections read', action: 'read:o' }], actions: [] }), /<span class="mark-read"><span class="codicon codicon-book" aria-label="reading" role="img"><\/span><\/span><button class="link" data-action="read:o">Option and Result/, 'a reading has its own book mark, unlike a lesson or a skill');
 
 // Explore's next section keeps the title: still a new screen, read from the top
 const section = { kind: 'explore', title: 'Python decorators', progress: { label: 'Section 3 of 8', done: 3, total: 8 }, body: 'Three', actions: [{ id: 'next', label: 'Next section', primary: true, key: 'enter' }] };
